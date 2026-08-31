@@ -16,6 +16,8 @@ export type Item = {
   project?: string;
   done?: boolean;
   actualMinutes?: number;
+  splitFrom?: string;
+  archived?: boolean;
   createdAt: string;
   updatedAt: string;
 };

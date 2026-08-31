@@ -1,7 +1,11 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { loadData, emptyData, saveData } from "./storage.ts";
 
 // Minimal localStorage stand-in so the real adapter can run outside a browser.
+// A plain static import above is safe here: loadData/saveData only touch
+// `window` when a test actually calls them, not at import time - so this
+// mock only needs to exist before the test bodies run, which it does.
 const store = new Map<string, string>();
 (globalThis as any).window = {
   localStorage: {
@@ -9,8 +13,6 @@ const store = new Map<string, string>();
     setItem: (k: string, v: string) => void store.set(k, v),
   },
 };
-
-const { loadData, emptyData, saveData } = await import("./storage.ts");
 
 beforeEach(() => store.clear());
 

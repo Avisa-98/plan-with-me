@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Bucket, Category, Item, Reflection, StoredData, Targets, emptyData, loadData, makeId, saveData } from "../lib/storage";
-import { isLater, isUnresolved, isWeekItem } from "../lib/views";
+import { isArchived, isLater, isUnresolved, isWeekItem } from "../lib/views";
+import { joinSelected, segmentText } from "../lib/split";
 
 const categories: Category[] = ["Work", "Family", "Friends", "Health", "Entertainment"];
 const buckets: Bucket[] = ["Today", "This Week", "Later"];
@@ -21,7 +22,11 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>("home");
   const [capture, setCapture] = useState("");
   const [selected, setSelected] = useState<Item | null>(null);
-  const [duplicate, setDuplicate] = useState<Item | null>(null);
+  const [splitting, setSplitting] = useState<Item | null>(null);
+  // What's waiting on the duplicate-warning popup: the text someone tried to
+  // save, the existing item it matches, and (for a split item only) which
+  // note it should stay linked back to if they choose to keep it anyway.
+  const [duplicate, setDuplicate] = useState<{ text: string; match: Item; splitFrom?: string } | null>(null);
   const [toast, setToast] = useState("");
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [summary, setSummary] = useState<Reflection | null>(null);
@@ -45,6 +50,7 @@ export default function Home() {
   const unresolved = data.items.filter(isUnresolved);
   const weekItems = data.items.filter(isWeekItem);
   const laterItems = data.items.filter(isLater);
+  const archivedItems = data.items.filter(isArchived);
   const weekMinutes = weekItems.reduce((sum, item) => sum + (item.estimateMinutes ?? 0), 0);
   const categoryTotals = categories.map((category) => ({
     category,
@@ -59,32 +65,44 @@ export default function Home() {
     setToast(message);
   }
 
+  // The one place that actually writes a new item to storage. Both Quick
+  // capture and Split call this - so there is exactly one rule for what a
+  // saved item looks like, instead of two copies that could drift apart.
+  function commitNewItem(text: string, splitFrom: string | undefined, message: string) {
+    const now = new Date().toISOString();
+    const item: Item = { id: makeId(), text, status: "Unprocessed", splitFrom, createdAt: now, updatedAt: now };
+    updateData((current) => ({ ...current, items: [item, ...current.items] }));
+    showToast(message);
+  }
+
+  // Same duplicate check for both entry points: is there already an item
+  // with this exact wording? If so, stop and ask before saving a second
+  // copy, instead of silently letting the same thought pile up twice.
+  function findDuplicate(text: string) {
+    return data.items.find((item) => item.text.trim().toLowerCase() === text.toLowerCase());
+  }
+
   function addThought() {
     const text = capture.trim();
     if (!text) {
       showToast("Write the thought first. Nothing was saved.");
       return;
     }
-    const matching = data.items.find((item) => item.text.trim().toLowerCase() === text.toLowerCase());
+    const matching = findDuplicate(text);
     if (matching) {
-      setDuplicate(matching);
+      setDuplicate({ text, match: matching });
       return;
     }
-    const now = new Date().toISOString();
-    const item: Item = { id: makeId(), text, status: "Unprocessed", createdAt: now, updatedAt: now };
-    updateData((current) => ({ ...current, items: [item, ...current.items] }));
+    commitNewItem(text, undefined, "Saved to Unprocessed.");
     setCapture("");
-    showToast("Saved to Unprocessed.");
   }
 
   function keepDuplicate() {
-    const text = capture.trim();
-    const now = new Date().toISOString();
-    const item: Item = { id: makeId(), text, status: "Unprocessed", createdAt: now, updatedAt: now };
-    updateData((current) => ({ ...current, items: [item, ...current.items] }));
+    if (!duplicate) return;
+    const fromCapture = !duplicate.splitFrom;
+    commitNewItem(duplicate.text, duplicate.splitFrom, fromCapture ? "Saved as a second note." : "Added as a second item from this note.");
     setDuplicate(null);
-    setCapture("");
-    showToast("Saved as a second note.");
+    if (fromCapture) setCapture("");
   }
 
   function saveItem(updated: Item) {
@@ -97,6 +115,25 @@ export default function Home() {
     updateData((current) => ({ ...current, items: current.items.filter((item) => item.id !== id) }));
     setSelected(null);
     showToast("Item deleted.");
+  }
+
+  // Pulls one phrase out of a braindump as its own Unprocessed item. The
+  // parent note is never edited - splitFrom just points a new item back at
+  // it, so the original wording is always still there to check against.
+  function addSplitItem(parentId: string, text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const matching = findDuplicate(trimmed);
+    if (matching) {
+      setDuplicate({ text: trimmed, match: matching, splitFrom: parentId });
+      return;
+    }
+    commitNewItem(trimmed, parentId, "Added as a separate item.");
+  }
+
+  function archiveItem(id: string) {
+    updateData((current) => ({ ...current, items: current.items.map((item) => item.id === id ? { ...item, archived: true, updatedAt: new Date().toISOString() } : item) }));
+    showToast("Archived. It is out of your way, not deleted.");
   }
 
   function saveReflection(type: "daily" | "weekly", text: string) {
@@ -132,7 +169,7 @@ export default function Home() {
         </nav>
 
         {tab === "home" && <Overview unresolved={unresolved} weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} onCapture={() => document.getElementById("capture")?.focus()} onOpen={(item) => setSelected(item)} onTab={setTab} />}
-        {tab === "inbox" && <Inbox items={unresolved} onOpen={(item) => setSelected(item)} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
+        {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} archivedItems={archivedItems} onOpen={(item) => setSelected(item)} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
         {tab === "week" && <WeekView items={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} />}
         {tab === "reflections" && <ReflectionPanel unresolved={unresolved} reflections={data.reflections} onOpen={(item) => setSelected(item)} onSave={saveReflection} />}
 
@@ -143,6 +180,7 @@ export default function Home() {
         </section>
 
         {selected && <OrganizePanel item={selected} onSave={saveItem} onDelete={() => deleteItem(selected.id)} onClose={() => setSelected(null)} />}
+        {splitting && <SplitPanel item={splitting} children={data.items.filter((item) => item.splitFrom === splitting.id)} onAddChild={(text) => addSplitItem(splitting.id, text)} onClose={() => setSplitting(null)} />}
         {duplicate && <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="duplicate-title"><div className="section-label">Possible duplicate</div><h2 id="duplicate-title">You already have a note like this.</h2><p className="empty">Keep it anyway, or cancel and continue with the existing note.</p><div className="actions"><button className="ghost" onClick={() => setDuplicate(null)}>Cancel</button><button className="primary" onClick={keepDuplicate}>Keep both</button></div></div></div>}
         {summaryOpen && <SummaryModal items={unresolved} onClose={() => setSummaryOpen(false)} />}
         {toast && <div className="toast" role="status">{toast}</div>}
@@ -155,12 +193,96 @@ function Overview({ unresolved, weekItems, weekMinutes, categoryTotals, largestC
   return <div className="layout"><div className="stack"><section className="card stat-card"><div className="section-label">This week in view</div><div className="big-number">{formatMinutes(weekMinutes)}</div><p className="stat-sub">estimated across {weekItems.length} planned {weekItems.length === 1 ? "item" : "items"}. Add estimates during review to make this useful.</p><div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar"><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Unprocessed</div><h2>{unresolved.length ? `${unresolved.length} thought${unresolved.length === 1 ? "" : "s"} waiting` : "Your inbox is clear"}</h2></div><button className="ghost small-button" onClick={() => onTab("inbox")}>Open inbox</button></div>{unresolved.length ? <div className="item-list">{unresolved.slice(0, 4).map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Organize" />)}</div> : <p className="empty">Capture the next thing before it pulls you away.</p>}</section></div><div className="stack"><section className="card"><div className="section-label">The one move</div><h2 style={{ marginTop: 8 }}>Park the thought. Keep going.</h2><p className="empty">Your notes stay unresolved until you choose to organize them. Nothing gets scheduled without your approval.</p><button className="primary" style={{ marginTop: 16, width: "100%" }} onClick={onCapture}>Add a thought</button></section><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>What is taking space?</h2></div></div><p className="empty">{weekItems.length ? "Review the draft to spot conflicts and make the trade-off yourself." : "Organized items will appear here as a draft week."}</p><button className="ghost" style={{ marginTop: 15, width: "100%" }} onClick={() => onTab("week")}>Open This week</button></section></div></div>;
 }
 
-function ItemRow({ item, onOpen, action }: { item: Item; onOpen: (item: Item) => void; action: string }) {
-  return <div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.category && <span className="tag">{item.category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}</div></div><button className="ghost small-button" onClick={() => onOpen(item)}>{action}</button></div>;
+function ItemRow({ item, onOpen, action, footer }: { item: Item; onOpen: (item: Item) => void; action: string; footer?: React.ReactNode }) {
+  return <div className="item-row-wrap"><div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.splitFrom && <span className="tag subtle">↗ from a braindump</span>}{item.category && <span className="tag">{item.category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}</div></div><button className="ghost small-button" onClick={() => onOpen(item)}>{action}</button></div>{footer}</div>;
 }
 
-function Inbox({ items, onOpen, onSummary }: { items: Item[]; onOpen: (item: Item) => void; onSummary: () => void }) {
-  return <section className="card"><div className="card-header"><div><div className="section-label">Unprocessed inbox</div><h2>Decide when you have space.</h2></div><button className="ghost small-button" onClick={onSummary} disabled={!items.length}>Summarize unresolved</button></div>{items.length ? <div className="item-list">{items.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Organize" />)}</div> : <p className="empty">Nothing waiting here. Use Quick capture whenever a thought arrives.</p>}</section>;
+function Inbox({ items, allItems, archivedItems, onOpen, onSplit, onArchive, onSummary }: { items: Item[]; allItems: Item[]; archivedItems: Item[]; onOpen: (item: Item) => void; onSplit: (item: Item) => void; onArchive: (id: string) => void; onSummary: () => void }) {
+  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Unprocessed inbox</div><h2>Decide when you have space.</h2></div><button className="ghost small-button" onClick={onSummary} disabled={!items.length}>Summarize unresolved</button></div>{items.length ? <div className="item-list">{items.map((item) => {
+    const childCount = allItems.filter((candidate) => candidate.splitFrom === item.id).length;
+    return <ItemRow key={item.id} item={item} onOpen={onOpen} action="Organize" footer={
+      <div className="row-footer">
+        {childCount > 0 && <span className="hint">⤷ {childCount} item{childCount === 1 ? "" : "s"} split out</span>}
+        <button className="ghost small-button" onClick={() => onSplit(item)}>Split</button>
+        {childCount > 0 && <button className="ghost small-button" onClick={() => onArchive(item.id)}>Nothing left in this note</button>}
+      </div>
+    } />;
+  })}</div> : <p className="empty">Nothing waiting here. Use Quick capture whenever a thought arrives.</p>}</section>{archivedItems.length > 0 && <section className="card"><details><summary className="section-label">Archive · {archivedItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Original braindumps you have fully split into separate items. Kept out of the way, not deleted.</p><div className="item-list" style={{ marginTop: 12 }}>{archivedItems.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="View" />)}</div></details></section>}</div>;
+}
+
+function SplitPanel({ item, children, onAddChild, onClose }: { item: Item; children: Item[]; onAddChild: (text: string) => void; onClose: () => void }) {
+  // Recomputed only when the note's text changes - segmentText is a pure
+  // function, so re-running it on every keystroke elsewhere would be wasted
+  // work. It never changes here since the original note is read-only in
+  // this panel, but useMemo keeps that assumption cheap either way.
+  const segments = useMemo(() => segmentText(item.text), [item.text]);
+  const [pending, setPending] = useState<Set<number>>(new Set());
+  // Segments made into an item this session. A segment whose exact text
+  // already matches an existing child (from a previous visit to this panel)
+  // is treated as consumed too, so re-opening the panel does not invite you
+  // to split the same phrase out twice.
+  const [consumedThisSession, setConsumedThisSession] = useState<Set<number>>(new Set());
+  const usedTexts = new Set(children.map((child) => child.text.trim().toLowerCase()));
+
+  function isConsumed(id: number, text: string) {
+    return consumedThisSession.has(id) || usedTexts.has(text.trim().toLowerCase());
+  }
+
+  function toggle(segment: { id: number; text: string }) {
+    if (isConsumed(segment.id, segment.text)) return;
+    setPending((current) => {
+      const next = new Set(current);
+      if (next.has(segment.id)) next.delete(segment.id); else next.add(segment.id);
+      return next;
+    });
+  }
+
+  function createFromPending() {
+    if (pending.size === 0) return;
+    onAddChild(joinSelected(segments, pending));
+    setConsumedThisSession((current) => {
+      const next = new Set(current);
+      pending.forEach((id) => next.add(id));
+      return next;
+    });
+    setPending(new Set());
+  }
+
+  function createFromHighlight() {
+    const text = window.getSelection()?.toString().trim() ?? "";
+    if (!text) return;
+    onAddChild(text);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  // Rebuild the note as alternating plain text (the original punctuation
+  // and spacing between chunks) and clickable spans (the chunks themselves),
+  // using each segment's real offsets so the note still reads naturally.
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  segments.forEach((segment) => {
+    if (segment.start > cursor) nodes.push(item.text.slice(cursor, segment.start));
+    const consumed = isConsumed(segment.id, segment.text);
+    const state = consumed ? "chunk-consumed" : pending.has(segment.id) ? "chunk-pending" : "";
+    nodes.push(<span key={segment.id} className={`chunk chunk-c${segment.id % 6} ${state}`} onClick={() => toggle(segment)}>{segment.text}</span>);
+    cursor = segment.end;
+  });
+  if (cursor < item.text.length) nodes.push(item.text.slice(cursor));
+
+  return <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="split-title">
+    <div className="card-header"><div><div className="section-label">Split this note</div><h2 id="split-title">Pull out separate items.</h2></div><button className="ghost small-button" onClick={onClose}>Close</button></div>
+    <p className="empty">Tap a highlighted phrase to turn it into its own item. Tap more than one if they are part of the same thought.</p>
+    <p className="split-source">{nodes}</p>
+    <div className="actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+      <button className="primary" onClick={createFromPending} disabled={pending.size === 0}>{pending.size > 1 ? `Create item from ${pending.size} chunks` : "Create item"}</button>
+      <button className="ghost" onClick={createFromHighlight}>Make item from highlighted text</button>
+    </div>
+    {children.length > 0 && <div className="field full" style={{ marginTop: 18 }}>
+      <label>Split out so far ({children.length})</label>
+      <div className="item-list" style={{ marginTop: 8 }}>{children.map((child) => <div className="item-row" key={child.id}><div className="item-main"><div className="item-text">{child.text}</div></div></div>)}</div>
+    </div>}
+    <div className="actions"><button className="ghost" onClick={onClose}>Done</button></div>
+  </div></div>;
 }
 
 function OrganizePanel({ item, onSave, onDelete, onClose }: { item: Item; onSave: (item: Item) => void; onDelete: () => void; onClose: () => void }) {
