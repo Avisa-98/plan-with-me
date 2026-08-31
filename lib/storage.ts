@@ -51,3 +51,23 @@ export function saveData(data: StoredData) {
 export function makeId() {
   return crypto.randomUUID();
 }
+
+// Everything is stored only on this device - Export/Import is the one way
+// to move it anywhere else, or protect against clearing site data.
+export function exportData(data: StoredData): string {
+  return JSON.stringify(data, null, 2);
+}
+
+// Same "fill in missing fields, keep everything else" rule loadData uses -
+// one place decides what a valid StoredData looks like. Returns null for
+// anything that clearly isn't a Plan With Me backup, so the caller can show
+// a plain error instead of silently wiping the current plan.
+export function parseImport(raw: string): StoredData | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.items)) return null;
+    return { ...emptyData(), ...parsed };
+  } catch {
+    return null;
+  }
+}

@@ -1,6 +1,6 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadData, emptyData, saveData } from "./storage.ts";
+import { loadData, emptyData, saveData, exportData, parseImport } from "./storage.ts";
 
 // Minimal localStorage stand-in so the real adapter can run outside a browser.
 // A plain static import above is safe here: loadData/saveData only touch
@@ -47,4 +47,30 @@ test("corrupt storage falls back to empty data instead of crashing", () => {
   const back = loadData();
   assert.deepEqual(back.items, []);
   assert.ok(back.deviceKey);
+});
+
+test("exportData produces JSON that parseImport reads back exactly", () => {
+  const now = new Date().toISOString();
+  const data = {
+    deviceKey: "device-1",
+    items: [{ id: "a", text: "call the bank", status: "Unprocessed" as const, createdAt: now, updatedAt: now }],
+    reflections: [],
+    targets: { Work: 10 },
+  };
+  assert.deepEqual(parseImport(exportData(data)), data);
+});
+
+test("parseImport rejects text that isn't valid JSON", () => {
+  assert.equal(parseImport("not json at all"), null);
+});
+
+test("parseImport rejects JSON with no items array - not a backup file", () => {
+  assert.equal(parseImport(JSON.stringify({ foo: "bar" })), null);
+});
+
+test("parseImport fills in any missing fields with defaults, but keeps the file's own device key", () => {
+  const back = parseImport(JSON.stringify({ items: [], deviceKey: "device-2" }));
+  assert.deepEqual(back?.reflections, []);
+  assert.deepEqual(back?.targets, {});
+  assert.equal(back?.deviceKey, "device-2");
 });

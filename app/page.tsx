@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bucket, Category, Item, Reflection, StoredData, Targets, emptyData, loadData, makeId, saveData } from "../lib/storage";
+import { Bucket, Category, Item, Reflection, StoredData, Targets, emptyData, exportData, loadData, makeId, parseImport, saveData } from "../lib/storage";
 import { isArchived, isLater, isUnresolved, isWeekItem } from "../lib/views";
 import { joinSelected, segmentText } from "../lib/split";
 import { isDoneToday, rankReplacementCandidates } from "../lib/reflect";
@@ -18,11 +18,36 @@ function formatMinutes(minutes?: number) {
   return hours ? `${hours}h${rest ? ` ${rest}m` : ""}` : `${rest}m`;
 }
 
+// "Estimate needed" already reads as a full sentence on its own - appending
+// "estimated" to it produced "Estimate needed estimated". Only a real
+// number gets that suffix.
+function estimateTag(minutes?: number) {
+  return minutes ? `${formatMinutes(minutes)} estimated` : "Estimate needed";
+}
+
+function CaptureForm({ capture, setCapture, onSubmit, onCancel, autoFocus }: { capture: string; setCapture: (value: string) => void; onSubmit: () => void; onCancel?: () => void; autoFocus?: boolean }) {
+  return <section className="card capture-card" style={{ marginBottom: 18 }}>
+    <div className="card-header"><div><div className="section-label">Quick capture</div><h2>Get it out of your head.</h2></div><span className="tag">No decision needed</span></div>
+    <textarea id="capture" value={capture} onChange={(event) => setCapture(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) onSubmit(); }} placeholder="Write a concise thought, task, event, or idea…" aria-label="New thought" autoFocus={autoFocus} />
+    <div className="capture-footer">
+      <p className="hint">Save it now. Organize it from Unprocessed whenever you have the space.</p>
+      <div style={{ display: "flex", gap: 8 }}>
+        {onCancel && <button className="ghost" onClick={onCancel}>Cancel</button>}
+        <button className="primary" onClick={onSubmit}>Add to Unprocessed</button>
+      </div>
+    </div>
+  </section>;
+}
+
 export default function Home() {
   const [data, setData] = useState<StoredData>(() => emptyData());
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
   const [capture, setCapture] = useState("");
+  // Whether the full capture form is expanded on a non-Overview tab - those
+  // tabs show a compact button instead, so their own content isn't pushed
+  // below the fold by a form most visits don't need.
+  const [captureExpanded, setCaptureExpanded] = useState(false);
   const [selected, setSelected] = useState<Item | null>(null);
   const [splitting, setSplitting] = useState<Item | null>(null);
   // What's waiting on the duplicate-warning popup: the text someone tried to
@@ -51,6 +76,10 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    setCaptureExpanded(false);
+  }, [tab]);
+
   const targets = data.targets;
   const unresolved = data.items.filter(isUnresolved);
   const weekItems = data.items.filter(isWeekItem);
@@ -74,6 +103,34 @@ export default function Home() {
 
   function showToast(message: string) {
     setToast(message);
+  }
+
+  // Everything lives only in this browser's storage - Export writes the
+  // exact same shape Import reads back, using the same functions, so a
+  // round trip can't silently drop or reshape anything in between.
+  function exportBackup() {
+    const blob = new Blob([exportData(data)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `plan-with-me-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast("Backup downloaded.");
+  }
+
+  function importBackup(file: File) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseImport(String(reader.result ?? ""));
+      if (!parsed) {
+        showToast("That file doesn't look like a Plan With Me backup.");
+        return;
+      }
+      setData(parsed);
+      showToast(`Imported ${parsed.items.length} item${parsed.items.length === 1 ? "" : "s"}.`);
+    };
+    reader.readAsText(file);
   }
 
   // The one place that actually writes a new item to storage. Both Quick
@@ -106,6 +163,7 @@ export default function Home() {
     }
     commitNewItem(text, undefined, "Saved to Unprocessed.");
     setCapture("");
+    setCaptureExpanded(false);
   }
 
   function keepDuplicate() {
@@ -113,7 +171,7 @@ export default function Home() {
     const fromCapture = !duplicate.splitFrom;
     commitNewItem(duplicate.text, duplicate.splitFrom, fromCapture ? "Saved as a second note." : "Added as a second item from this note.");
     setDuplicate(null);
-    if (fromCapture) setCapture("");
+    if (fromCapture) { setCapture(""); setCaptureExpanded(false); }
   }
 
   function saveItem(updated: Item) {
@@ -207,22 +265,34 @@ export default function Home() {
     <main className="app-shell">
       <div className="app-frame">
         <header className="topbar">
-          <div><div className="eyebrow">Plan With Me · v1</div><h1>Make room for what matters.</h1></div>
-          <p className="top-note">Catch the thought. Keep your focus. Decide what fits when you are ready.</p>
+          <div><div className="eyebrow">Plan With Me · v1</div><h1>Capture the thought. Plan the week. No login.</h1></div>
+          <p className="top-note">For anyone whose day gets pulled in five directions. Jot down what's on your mind in seconds, then turn it into a real plan when you have a minute.</p>
         </header>
+        <div className="device-banner">
+          <p>Saved on this device only — no account, no cloud backup. Clearing your browser data clears your plan.</p>
+          <div className="device-banner-actions">
+            <button className="ghost small-button" onClick={exportBackup}>Export backup</button>
+            <button className="ghost small-button" onClick={() => document.getElementById("import-file")?.click()}>Import backup</button>
+            <input id="import-file" type="file" accept="application/json" style={{ display: "none" }} onChange={(event) => { const file = event.target.files?.[0]; if (file) importBackup(file); event.target.value = ""; }} />
+          </div>
+        </div>
         <nav className="nav" aria-label="Primary navigation">
           {nav.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</button>)}
         </nav>
 
-        {/* Capture comes first on every tab - the point of this app is that a
-            thought never has to wait for the right screen before it's saved. */}
-        <section className="card capture-card" style={{ marginBottom: 18 }}>
-          <div className="card-header"><div><div className="section-label">Quick capture</div><h2>Get it out of your head.</h2></div><span className="tag">No decision needed</span></div>
-          <textarea id="capture" value={capture} onChange={(event) => setCapture(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) addThought(); }} placeholder="Write a concise thought, task, event, or idea…" aria-label="New thought" />
-          <div className="capture-footer"><p className="hint">Save it now. Organize it from Unprocessed whenever you have the space.</p><button className="primary" onClick={addThought}>Add to Unprocessed</button></div>
-        </section>
+        {/* The full form always leads on Overview - that's the one screen whose
+            whole job is capture. Elsewhere it stays a compact button so a
+            tab's own content isn't pushed below the fold by a form most
+            visits to that tab don't need. */}
+        {tab === "home" ? (
+          <CaptureForm capture={capture} setCapture={setCapture} onSubmit={addThought} />
+        ) : captureExpanded ? (
+          <CaptureForm capture={capture} setCapture={setCapture} onSubmit={addThought} onCancel={() => setCaptureExpanded(false)} autoFocus />
+        ) : (
+          <button type="button" className="capture-compact" onClick={() => setCaptureExpanded(true)}>+ Add a thought</button>
+        )}
 
-        {tab === "home" && <Overview unresolved={unresolved} weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} onCapture={() => document.getElementById("capture")?.focus()} onOpen={(item) => setSelected(item)} onTab={setTab} />}
+        {tab === "home" && <Overview unresolved={unresolved} weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} onOpen={(item) => setSelected(item)} onTab={setTab} />}
         {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} archivedItems={archivedItems} onOpen={(item) => setSelected(item)} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
         {tab === "week" && <PlanTab weekItems={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} onDone={toggleDone} committedItems={committedItems} />}
         {tab === "reflections" && <ReflectionPanel doneToday={doneToday} openItems={openItems} allItems={data.items} reflections={data.reflections} onOpen={(item) => setSelected(item)} onDrop={deleteItem} onReplace={replaceItem} onSave={saveReflection} />}
@@ -238,8 +308,8 @@ export default function Home() {
   );
 }
 
-function Overview({ unresolved, weekItems, weekMinutes, categoryTotals, largestCategory, onCapture, onOpen, onTab }: { unresolved: Item[]; weekItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; onCapture: () => void; onOpen: (item: Item) => void; onTab: (tab: Tab) => void }) {
-  return <div className="layout"><div className="stack"><section className="card stat-card"><div className="section-label">This week in view</div><div className="big-number">{formatMinutes(weekMinutes)}</div><p className="stat-sub">estimated across {weekItems.length} planned {weekItems.length === 1 ? "item" : "items"}. Add estimates during review to make this useful.</p><div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar"><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Unprocessed</div><h2>{unresolved.length ? `${unresolved.length} thought${unresolved.length === 1 ? "" : "s"} waiting` : "Your inbox is clear"}</h2></div><button className="ghost small-button" onClick={() => onTab("inbox")}>Open inbox</button></div>{unresolved.length ? <div className="item-list">{unresolved.slice(0, 4).map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Organize" />)}</div> : <p className="empty">Capture the next thing before it pulls you away.</p>}</section></div><div className="stack"><section className="card"><div className="section-label">The one move</div><h2 style={{ marginTop: 8 }}>Park the thought. Keep going.</h2><p className="empty">Your notes stay unresolved until you choose to organize them. Nothing gets scheduled without your approval.</p><button className="primary" style={{ marginTop: 16, width: "100%" }} onClick={onCapture}>Add a thought</button></section><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>What is taking space?</h2></div></div><p className="empty">{weekItems.length ? "Review the draft to spot conflicts and make the trade-off yourself." : "Organized items will appear here as a draft week."}</p><button className="ghost" style={{ marginTop: 15, width: "100%" }} onClick={() => onTab("week")}>Open This week</button></section></div></div>;
+function Overview({ unresolved, weekItems, weekMinutes, categoryTotals, largestCategory, onOpen, onTab }: { unresolved: Item[]; weekItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; onOpen: (item: Item) => void; onTab: (tab: Tab) => void }) {
+  return <div className="layout"><div className="stack"><section className="card stat-card"><div className="section-label">This week in view</div>{weekItems.length > 0 ? <><div className="big-number">{formatMinutes(weekMinutes)}</div><p className="stat-sub">estimated across {weekItems.length} planned {weekItems.length === 1 ? "item" : "items"}. Add estimates during review to make this useful.</p><div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar"><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></> : <p className="stat-sub" style={{ marginTop: 8 }}>Capture a thought, then organize it into this week to see your time here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Unprocessed</div><h2>{unresolved.length ? `${unresolved.length} thought${unresolved.length === 1 ? "" : "s"} waiting` : "Your inbox is clear"}</h2></div><button className="ghost" onClick={() => onTab("inbox")}>Open inbox</button></div>{unresolved.length ? <div className="item-list">{unresolved.slice(0, 4).map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Organize" />)}</div> : <p className="empty">Capture the next thing before it pulls you away.</p>}</section></div><div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>What is taking space?</h2></div></div><p className="empty">{weekItems.length ? "Review the draft to spot conflicts and make the trade-off yourself." : "Organized items will appear here as a draft week."}</p><button className="ghost" style={{ marginTop: 15, width: "100%" }} onClick={() => onTab("week")}>Open This week</button></section></div></div>;
 }
 
 function ItemRow({ item, onOpen, action, footer, onDone }: { item: Item; onOpen: (item: Item) => void; action: string; footer?: React.ReactNode; onDone?: (item: Item) => void }) {
@@ -368,7 +438,10 @@ function WeekView({ items, laterItems, weekMinutes, categoryTotals, largestCateg
   // Local editing draft, seeded from the saved targets. WeekView only mounts
   // after storage has loaded, so this always starts from real saved values.
   const [draftTargets, setDraftTargets] = useState<Targets>(targets);
-  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>Your week, at a glance.</h2></div><span className="tag accent">{formatMinutes(weekMinutes)} estimated</span></div>{conflicts.length > 0 && <div className="notice">This draft is above the target for {conflicts.map((item) => item.category).join(", ")}. Choose the trade-off yourself; nothing moved automatically.</div>}<div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar" style={{ background: "var(--paper-deep)" }}><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Items in the draft</div><h2>What is taking space?</h2></div></div>{items.length ? <div className="item-list">{items.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Organize an item and choose Today or This Week to see it here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Later</div><h2>Parked, not forgotten.</h2></div><span className="tag">{laterItems.length}</span></div>{laterItems.length ? <div className="item-list">{laterItems.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Items you commit to Later wait here until you pull them into a week.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Optional setup</div><h2>Set weekly targets.</h2></div></div><p className="empty">Targets help the draft show where your time is going. You can skip this and return here later.</p><div className="form-grid" style={{ marginTop: 14 }}>{categories.map((category) => <div className="field" key={category}><label htmlFor={`target-${category}`}>{category} hours</label><input id={`target-${category}`} type="number" min="0" step="0.5" value={draftTargets[category] ?? ""} onChange={(event) => setDraftTargets({ ...draftTargets, [category]: event.target.value ? Number(event.target.value) : undefined })} placeholder="Not set" /></div>)}</div><div className="actions"><button className="primary" onClick={() => onSaveTargets(draftTargets)}>Save targets</button></div></section></div>;
+  const weekStart = startOfWeek(new Date());
+  const weekEnd = addDays(weekStart, 6);
+  const weekRange = `${weekStart.toLocaleDateString(undefined, { month: "long", day: "numeric" })} – ${weekEnd.toLocaleDateString(undefined, { month: "long", day: "numeric" })}`;
+  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>Your week, at a glance.</h2><p className="hint" style={{ marginTop: 4 }}>{weekRange}</p></div><span className="tag accent">{estimateTag(weekMinutes)}</span></div>{conflicts.length > 0 && <div className="notice">This draft is above the target for {conflicts.map((item) => item.category).join(", ")}. Choose the trade-off yourself; nothing moved automatically.</div>}<div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar" style={{ background: "var(--paper-deep)" }}><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Items in the draft</div><h2>What is taking space?</h2></div></div>{items.length ? <div className="item-list">{items.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Organize an item and choose Today or This Week to see it here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Later</div><h2>Parked, not forgotten.</h2></div><span className="tag">{laterItems.length}</span></div>{laterItems.length ? <div className="item-list">{laterItems.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Items you commit to Later wait here until you pull them into a week.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Optional setup</div><h2>Set weekly targets.</h2></div></div><p className="empty">Targets help the draft show where your time is going. You can skip this and return here later.</p><div className="form-grid" style={{ marginTop: 14 }}>{categories.map((category) => <div className="field" key={category}><label htmlFor={`target-${category}`}>{category} hours</label><input id={`target-${category}`} type="number" min="0" step="0.5" value={draftTargets[category] ?? ""} onChange={(event) => setDraftTargets({ ...draftTargets, [category]: event.target.value ? Number(event.target.value) : undefined })} placeholder="Not set" /></div>)}</div><div className="actions"><button className="primary" onClick={() => onSaveTargets(draftTargets)}>Save targets</button></div></section></div>;
 }
 
 // The "This week" tab: one set of data, four lenses on it. Category is the
