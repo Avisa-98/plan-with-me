@@ -9,12 +9,14 @@ import type { Item } from "./storage";
  *
  * `isArchived` is checked first and overrides every other state: once a
  * braindump is archived it belongs only in the Archive, regardless of what
- * its status or bucket happen to say. `isUnresolved` is the residual of
- * everything else - anything the other surfaces do not claim falls back to
- * the inbox. Together these make stranding and duplication impossible by
- * construction rather than by remembering to keep the predicates in sync.
+ * its status or bucket happen to say. `isIdea` is checked next and overrides
+ * everything except archived - an idea belongs only in the Idea Log, however
+ * it got a status or bucket. `isUnresolved` is the residual of everything
+ * else - anything the other surfaces do not claim falls back to the inbox.
+ * Together these make stranding and duplication impossible by construction
+ * rather than by remembering to keep the predicates in sync.
  *
- * `lib/views.test.ts` enforces this over every status/bucket/archived
+ * `lib/views.test.ts` enforces this over every status/bucket/archived/type
  * combination.
  */
 
@@ -22,14 +24,18 @@ export function isArchived(item: Item) {
   return !!item.archived;
 }
 
+export function isIdea(item: Item) {
+  return !isArchived(item) && item.type === "idea";
+}
+
 export function isWeekItem(item: Item) {
-  return !isArchived(item) && item.status === "Planned" && (item.bucket === "Today" || item.bucket === "This Week");
+  return !isArchived(item) && !isIdea(item) && item.status === "Planned" && (item.bucket === "Today" || item.bucket === "This Week");
 }
 
 export function isLater(item: Item) {
-  return !isArchived(item) && item.status === "Planned" && item.bucket === "Later";
+  return !isArchived(item) && !isIdea(item) && item.status === "Planned" && item.bucket === "Later";
 }
 
 export function isUnresolved(item: Item) {
-  return !isArchived(item) && !isWeekItem(item) && !isLater(item);
+  return !isArchived(item) && !isIdea(item) && !isWeekItem(item) && !isLater(item);
 }

@@ -5,7 +5,7 @@ import { isDoneToday, rankReplacementCandidates } from "./reflect.ts";
 
 function item(over: Partial<Item> = {}): Item {
   const now = new Date().toISOString();
-  return { id: "1", text: "t", status: "Unprocessed", createdAt: now, updatedAt: now, ...over };
+  return { id: "1", text: "t", status: "Inbox", createdAt: now, updatedAt: now, ...over };
 }
 
 test("an item marked done today counts as done today", () => {

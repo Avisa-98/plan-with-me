@@ -5,7 +5,7 @@ import { toDateKey, itemDateKey, itemsOnDate, unscheduledItems, startOfWeek, add
 
 function item(over: Partial<Item> = {}): Item {
   const now = new Date().toISOString();
-  return { id: "1", text: "t", status: "Unprocessed", createdAt: now, updatedAt: now, ...over };
+  return { id: "1", text: "t", status: "Inbox", createdAt: now, updatedAt: now, ...over };
 }
 
 test("toDateKey formats with zero-padded month and day", () => {

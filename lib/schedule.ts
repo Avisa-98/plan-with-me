@@ -4,7 +4,7 @@ import type { Item } from "./storage";
  * Date math for the Day / Week-by-day / Month views. An item only lands on
  * a specific day if it already has a due date or event start - nothing new
  * to fill in. Everything else is unscheduled, not lost: it still shows in
- * Unprocessed, This week, or Later, just not pinned to a calendar day.
+ * Inbox, This week, or Later, just not pinned to a calendar day.
  *
  * All dates here are local calendar dates, not UTC - "today" means the day
  * on the device's own clock.
