@@ -5,6 +5,7 @@ import { Bucket, Category, Item, Reflection, StoredData, Targets, emptyData, loa
 import { isArchived, isLater, isUnresolved, isWeekItem } from "../lib/views";
 import { joinSelected, segmentText } from "../lib/split";
 import { isDoneToday, rankReplacementCandidates } from "../lib/reflect";
+import { addDays, itemsOnDate, startOfMonth, startOfWeek, toDateKey, unscheduledItems } from "../lib/schedule";
 
 const categories: Category[] = ["Work", "Family", "Friends", "Health", "Entertainment"];
 const buckets: Bucket[] = ["Today", "This Week", "Later"];
@@ -57,6 +58,10 @@ export default function Home() {
   const archivedItems = data.items.filter(isArchived);
   const doneToday = data.items.filter((item) => isDoneToday(item, new Date()));
   const openItems = data.items.filter((item) => !isArchived(item) && !item.done);
+  // Everything actually committed to a plan - the pool the Day/Week-by-day/
+  // Month views draw from, since raw Unprocessed notes have nothing to put
+  // on a calendar yet.
+  const committedItems = data.items.filter((item) => !isArchived(item) && item.status === "Planned");
   const weekMinutes = weekItems.reduce((sum, item) => sum + (item.estimateMinutes ?? 0), 0);
   const categoryTotals = categories.map((category) => ({
     category,
@@ -219,7 +224,7 @@ export default function Home() {
 
         {tab === "home" && <Overview unresolved={unresolved} weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} onCapture={() => document.getElementById("capture")?.focus()} onOpen={(item) => setSelected(item)} onTab={setTab} />}
         {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} archivedItems={archivedItems} onOpen={(item) => setSelected(item)} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
-        {tab === "week" && <WeekView items={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} onDone={toggleDone} />}
+        {tab === "week" && <PlanTab weekItems={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} onDone={toggleDone} committedItems={committedItems} />}
         {tab === "reflections" && <ReflectionPanel doneToday={doneToday} openItems={openItems} allItems={data.items} reflections={data.reflections} onOpen={(item) => setSelected(item)} onDrop={deleteItem} onReplace={replaceItem} onSave={saveReflection} />}
 
         {selected && <OrganizePanel item={selected} onSave={saveItem} onDelete={() => deleteItem(selected.id)} onClose={() => setSelected(null)} />}
@@ -364,6 +369,113 @@ function WeekView({ items, laterItems, weekMinutes, categoryTotals, largestCateg
   // after storage has loaded, so this always starts from real saved values.
   const [draftTargets, setDraftTargets] = useState<Targets>(targets);
   return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>Your week, at a glance.</h2></div><span className="tag accent">{formatMinutes(weekMinutes)} estimated</span></div>{conflicts.length > 0 && <div className="notice">This draft is above the target for {conflicts.map((item) => item.category).join(", ")}. Choose the trade-off yourself; nothing moved automatically.</div>}<div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar" style={{ background: "var(--paper-deep)" }}><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Items in the draft</div><h2>What is taking space?</h2></div></div>{items.length ? <div className="item-list">{items.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Organize an item and choose Today or This Week to see it here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Later</div><h2>Parked, not forgotten.</h2></div><span className="tag">{laterItems.length}</span></div>{laterItems.length ? <div className="item-list">{laterItems.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Items you commit to Later wait here until you pull them into a week.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Optional setup</div><h2>Set weekly targets.</h2></div></div><p className="empty">Targets help the draft show where your time is going. You can skip this and return here later.</p><div className="form-grid" style={{ marginTop: 14 }}>{categories.map((category) => <div className="field" key={category}><label htmlFor={`target-${category}`}>{category} hours</label><input id={`target-${category}`} type="number" min="0" step="0.5" value={draftTargets[category] ?? ""} onChange={(event) => setDraftTargets({ ...draftTargets, [category]: event.target.value ? Number(event.target.value) : undefined })} placeholder="Not set" /></div>)}</div><div className="actions"><button className="primary" onClick={() => onSaveTargets(draftTargets)}>Save targets</button></div></section></div>;
+}
+
+// The "This week" tab: one set of data, four lenses on it. Category is the
+// original draft-week view; Day/Week-by-day/Month all read from the same
+// committed items and the same "no date yet" pile, just laid out differently.
+function PlanTab({ weekItems, laterItems, weekMinutes, categoryTotals, largestCategory, conflicts, targets, onSaveTargets, onOpen, onDone, committedItems }: { weekItems: Item[]; laterItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; onSaveTargets: (targets: Targets) => void; onOpen: (item: Item) => void; onDone: (item: Item) => void; committedItems: Item[] }) {
+  const [mode, setMode] = useState<"category" | "day" | "week" | "month">("category");
+  const [day, setDay] = useState(() => new Date());
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const [month, setMonth] = useState(() => startOfMonth(new Date()));
+  const unscheduled = unscheduledItems(committedItems);
+
+  const modes = [
+    ["category", "By category"],
+    ["day", "Day"],
+    ["week", "Week by day"],
+    ["month", "Month"],
+  ] as const;
+
+  return <div className="stack">
+    <div className="chips">{modes.map(([key, label]) => <button type="button" key={key} className={`chip ${mode === key ? "selected" : ""}`} onClick={() => setMode(key)}>{label}</button>)}</div>
+    {mode === "category" && <WeekView items={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={conflicts} targets={targets} onSaveTargets={onSaveTargets} onOpen={onOpen} onDone={onDone} />}
+    {mode === "day" && <DayPlanView date={day} setDate={setDay} items={committedItems} unscheduled={unscheduled} onOpen={onOpen} onDone={onDone} />}
+    {mode === "week" && <WeekByDayView weekStart={weekStart} setWeekStart={setWeekStart} items={committedItems} unscheduled={unscheduled} onOpen={onOpen} onDone={onDone} />}
+    {mode === "month" && <MonthPlanView month={month} setMonth={setMonth} items={committedItems} unscheduled={unscheduled} onOpen={onOpen} onDone={onDone} onPickDay={(picked) => { setDay(picked); setMode("day"); }} />}
+  </div>;
+}
+
+function UnscheduledCard({ items, onOpen, onDone }: { items: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+  return <section className="card"><div className="card-header"><div><div className="section-label">Unscheduled</div><h2>No specific day yet.</h2></div><span className="tag">{items.length}</span></div>{items.length ? <div className="item-list">{items.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Everything committed has a day, or nothing is committed yet. Add a due date in Organize to put an item on the calendar.</p>}</section>;
+}
+
+function DayPlanView({ date, setDate, items, unscheduled, onOpen, onDone }: { date: Date; setDate: (date: Date) => void; items: Item[]; unscheduled: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+  const dayItems = itemsOnDate(items, toDateKey(date));
+  const label = date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  return <div className="stack">
+    <section className="card">
+      <div className="card-header">
+        <div><div className="section-label">Day</div><h2>{label}</h2></div>
+        <div className="row-footer" style={{ margin: 0 }}>
+          <button className="ghost small-button" onClick={() => setDate(addDays(date, -1))}>← Prev</button>
+          <button className="ghost small-button" onClick={() => setDate(new Date())}>Today</button>
+          <button className="ghost small-button" onClick={() => setDate(addDays(date, 1))}>Next →</button>
+        </div>
+      </div>
+      {dayItems.length ? <div className="item-list">{dayItems.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Nothing scheduled for this day. Add a due date to an item in Organize to see it here.</p>}
+    </section>
+    <UnscheduledCard items={unscheduled} onOpen={onOpen} onDone={onDone} />
+  </div>;
+}
+
+function WeekByDayView({ weekStart, setWeekStart, items, unscheduled, onOpen, onDone }: { weekStart: Date; setWeekStart: (date: Date) => void; items: Item[]; unscheduled: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+  const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+  const rangeLabel = `${weekStart.toLocaleDateString(undefined, { month: "long", day: "numeric" })} – ${addDays(weekStart, 6).toLocaleDateString(undefined, { month: "long", day: "numeric" })}`;
+  return <div className="stack">
+    <section className="card">
+      <div className="card-header">
+        <div><div className="section-label">Week by day</div><h2>{rangeLabel}</h2></div>
+        <div className="row-footer" style={{ margin: 0 }}>
+          <button className="ghost small-button" onClick={() => setWeekStart(addDays(weekStart, -7))}>← Prev</button>
+          <button className="ghost small-button" onClick={() => setWeekStart(startOfWeek(new Date()))}>This week</button>
+          <button className="ghost small-button" onClick={() => setWeekStart(addDays(weekStart, 7))}>Next →</button>
+        </div>
+      </div>
+      <div className="week-grid">{days.map((day) => {
+        const key = toDateKey(day);
+        const dayItems = itemsOnDate(items, key);
+        return <div className="week-day" key={key}>
+          <div className="week-day-label">{day.toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}</div>
+          {dayItems.length ? dayItems.map((item) => <button type="button" className="week-day-item" key={item.id} onClick={() => onOpen(item)}>{item.text}</button>) : <div className="week-day-empty">—</div>}
+        </div>;
+      })}</div>
+    </section>
+    <UnscheduledCard items={unscheduled} onOpen={onOpen} onDone={onDone} />
+  </div>;
+}
+
+function MonthPlanView({ month, setMonth, items, unscheduled, onOpen, onDone, onPickDay }: { month: Date; setMonth: (date: Date) => void; items: Item[]; unscheduled: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void; onPickDay: (date: Date) => void }) {
+  const first = startOfMonth(month);
+  const totalDays = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const leadingBlanks = first.getDay() === 0 ? 6 : first.getDay() - 1;
+  const cells: (Date | null)[] = [...Array(leadingBlanks).fill(null), ...Array.from({ length: totalDays }, (_, index) => addDays(first, index))];
+  return <div className="stack">
+    <section className="card">
+      <div className="card-header">
+        <div><div className="section-label">Month</div><h2>{month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</h2></div>
+        <div className="row-footer" style={{ margin: 0 }}>
+          <button className="ghost small-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>←</button>
+          <button className="ghost small-button" onClick={() => setMonth(startOfMonth(new Date()))}>This month</button>
+          <button className="ghost small-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>→</button>
+        </div>
+      </div>
+      <div className="month-grid">
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => <div className="month-heading" key={label}>{label}</div>)}
+        {cells.map((cellDate, index) => {
+          if (!cellDate) return <div className="month-cell month-cell-blank" key={`blank-${index}`} />;
+          const key = toDateKey(cellDate);
+          const count = itemsOnDate(items, key).length;
+          return <button type="button" className="month-cell" key={key} onClick={() => onPickDay(cellDate)}>
+            <span className="month-cell-num">{cellDate.getDate()}</span>
+            {count > 0 && <span className="month-cell-count">{count}</span>}
+          </button>;
+        })}
+      </div>
+    </section>
+    <UnscheduledCard items={unscheduled} onOpen={onOpen} onDone={onDone} />
+  </div>;
 }
 
 function ReflectionPanel({ doneToday, openItems, allItems, reflections, onOpen, onDrop, onReplace, onSave }: { doneToday: Item[]; openItems: Item[]; allItems: Item[]; reflections: Reflection[]; onOpen: (item: Item) => void; onDrop: (id: string) => void; onReplace: (originalId: string, chosenId: string) => void; onSave: (type: "daily" | "weekly", text: string) => void }) {
