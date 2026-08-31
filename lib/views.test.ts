@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Item } from "./storage.ts";
-import { isUnresolved, isWeekItem, isLater, isArchived, isIdea } from "./views.ts";
+import { isUnresolved, isWeekItem, isLater, isArchived, isIdea, sortDoneLast } from "./views.ts";
 
 function item(over: Partial<Item> = {}): Item {
   const now = new Date().toISOString();
@@ -81,4 +81,31 @@ test("no item in any valid state is unreachable, and none appears on two surface
       }
     }
   }
+});
+
+test("sortDoneLast keeps every not-done item ahead of every done item", () => {
+  const a = item({ id: "a", done: false });
+  const b = item({ id: "b", done: true });
+  const c = item({ id: "c", done: false });
+  const d = item({ id: "d", done: true });
+  const sorted = sortDoneLast([a, b, c, d]);
+  assert.deepEqual(sorted.map((i) => i.id), ["a", "c", "b", "d"]);
+});
+
+test("sortDoneLast does not reorder items within the not-done group or the done group", () => {
+  // b and d are both done, in that order - they must stay in that order,
+  // not get shuffled just because they moved to the back.
+  const a = item({ id: "a", done: false });
+  const b = item({ id: "b", done: true });
+  const c = item({ id: "c", done: false });
+  const d = item({ id: "d", done: true });
+  const sorted = sortDoneLast([b, a, d, c]);
+  assert.deepEqual(sorted.map((i) => i.id), ["a", "c", "b", "d"]);
+});
+
+test("sortDoneLast does not mutate the array it was given", () => {
+  const original = [item({ id: "a", done: true }), item({ id: "b", done: false })];
+  const copy = [...original];
+  sortDoneLast(original);
+  assert.deepEqual(original, copy);
 });

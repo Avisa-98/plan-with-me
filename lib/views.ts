@@ -39,3 +39,11 @@ export function isLater(item: Item) {
 export function isUnresolved(item: Item) {
   return !isArchived(item) && !isIdea(item) && !isWeekItem(item) && !isLater(item);
 }
+
+// Not-done items first, done items after - keeping each group in whatever
+// order it already had (Array.sort is stable), so finishing something moves
+// it out of the way without shuffling anything else around it. Returns a
+// new array; the one passed in is left untouched.
+export function sortDoneLast(items: Item[]): Item[] {
+  return [...items].sort((a, b) => Number(!!a.done) - Number(!!b.done));
+}
