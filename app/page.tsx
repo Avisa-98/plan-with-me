@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Bucket, Category, Item, Reflection, StoredData, Targets, emptyData, loadData, makeId, saveData } from "../lib/storage";
 import { isArchived, isLater, isUnresolved, isWeekItem } from "../lib/views";
 import { joinSelected, segmentText } from "../lib/split";
+import { isDoneToday, rankReplacementCandidates } from "../lib/reflect";
 
 const categories: Category[] = ["Work", "Family", "Friends", "Health", "Entertainment"];
 const buckets: Bucket[] = ["Today", "This Week", "Later"];
@@ -27,6 +28,9 @@ export default function Home() {
   // save, the existing item it matches, and (for a split item only) which
   // note it should stay linked back to if they choose to keep it anyway.
   const [duplicate, setDuplicate] = useState<{ text: string; match: Item; splitFrom?: string } | null>(null);
+  // The item waiting on the "how long did it actually take?" prompt - only
+  // set when turning Done ON, since turning it off needs no such prompt.
+  const [markingDone, setMarkingDone] = useState<Item | null>(null);
   const [toast, setToast] = useState("");
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [summary, setSummary] = useState<Reflection | null>(null);
@@ -51,6 +55,8 @@ export default function Home() {
   const weekItems = data.items.filter(isWeekItem);
   const laterItems = data.items.filter(isLater);
   const archivedItems = data.items.filter(isArchived);
+  const doneToday = data.items.filter((item) => isDoneToday(item, new Date()));
+  const openItems = data.items.filter((item) => !isArchived(item) && !item.done);
   const weekMinutes = weekItems.reduce((sum, item) => sum + (item.estimateMinutes ?? 0), 0);
   const categoryTotals = categories.map((category) => ({
     category,
@@ -136,6 +142,41 @@ export default function Home() {
     showToast("Archived. It is out of your way, not deleted.");
   }
 
+  // Tapping Done on an already-done item un-marks it right away - no prompt
+  // needed to take something back. Marking it done for the first time opens
+  // the actual-time prompt instead of writing straight to storage.
+  function toggleDone(item: Item) {
+    if (item.done) {
+      updateData((current) => ({ ...current, items: current.items.map((i) => i.id === item.id ? { ...i, done: false, actualMinutes: undefined, updatedAt: new Date().toISOString() } : i) }));
+      showToast("Marked not done.");
+      return;
+    }
+    setMarkingDone(item);
+  }
+
+  function confirmDone(id: string, actualMinutes: number | undefined) {
+    updateData((current) => ({ ...current, items: current.items.map((item) => item.id === id ? { ...item, done: true, actualMinutes, updatedAt: new Date().toISOString() } : item) }));
+    setMarkingDone(null);
+    showToast("Marked done. Nice work.");
+  }
+
+  // Replace: the original item is dropped, and the chosen item is scheduled
+  // into the slot it leaves behind - the chosen item keeps its own category
+  // and estimate, it just takes over the original's bucket.
+  function replaceItem(originalId: string, chosenId: string) {
+    updateData((current) => {
+      const original = current.items.find((item) => item.id === originalId);
+      const bucket = original?.bucket ?? "Today";
+      return {
+        ...current,
+        items: current.items
+          .filter((item) => item.id !== originalId)
+          .map((item) => item.id === chosenId ? { ...item, status: "Planned", bucket, updatedAt: new Date().toISOString() } : item),
+      };
+    });
+    showToast("Replaced. The new item is scheduled in its place.");
+  }
+
   function saveReflection(type: "daily" | "weekly", text: string) {
     if (!text.trim()) return;
     const reflection: Reflection = { id: makeId(), type, text: text.trim(), createdAt: new Date().toISOString() };
@@ -168,18 +209,21 @@ export default function Home() {
           {nav.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</button>)}
         </nav>
 
-        {tab === "home" && <Overview unresolved={unresolved} weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} onCapture={() => document.getElementById("capture")?.focus()} onOpen={(item) => setSelected(item)} onTab={setTab} />}
-        {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} archivedItems={archivedItems} onOpen={(item) => setSelected(item)} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
-        {tab === "week" && <WeekView items={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} />}
-        {tab === "reflections" && <ReflectionPanel unresolved={unresolved} reflections={data.reflections} onOpen={(item) => setSelected(item)} onSave={saveReflection} />}
-
-        <section className="card capture-card" style={{ marginTop: 18 }}>
+        {/* Capture comes first on every tab - the point of this app is that a
+            thought never has to wait for the right screen before it's saved. */}
+        <section className="card capture-card" style={{ marginBottom: 18 }}>
           <div className="card-header"><div><div className="section-label">Quick capture</div><h2>Get it out of your head.</h2></div><span className="tag">No decision needed</span></div>
           <textarea id="capture" value={capture} onChange={(event) => setCapture(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) addThought(); }} placeholder="Write a concise thought, task, event, or idea…" aria-label="New thought" />
           <div className="capture-footer"><p className="hint">Save it now. Organize it from Unprocessed whenever you have the space.</p><button className="primary" onClick={addThought}>Add to Unprocessed</button></div>
         </section>
 
+        {tab === "home" && <Overview unresolved={unresolved} weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} onCapture={() => document.getElementById("capture")?.focus()} onOpen={(item) => setSelected(item)} onTab={setTab} />}
+        {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} archivedItems={archivedItems} onOpen={(item) => setSelected(item)} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
+        {tab === "week" && <WeekView items={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} onDone={toggleDone} />}
+        {tab === "reflections" && <ReflectionPanel doneToday={doneToday} openItems={openItems} allItems={data.items} reflections={data.reflections} onOpen={(item) => setSelected(item)} onDrop={deleteItem} onReplace={replaceItem} onSave={saveReflection} />}
+
         {selected && <OrganizePanel item={selected} onSave={saveItem} onDelete={() => deleteItem(selected.id)} onClose={() => setSelected(null)} />}
+        {markingDone && <DoneModal item={markingDone} onConfirm={(minutes) => confirmDone(markingDone.id, minutes)} onSkip={() => confirmDone(markingDone.id, undefined)} />}
         {splitting && <SplitPanel item={splitting} children={data.items.filter((item) => item.splitFrom === splitting.id)} onAddChild={(text) => addSplitItem(splitting.id, text)} onClose={() => setSplitting(null)} />}
         {duplicate && <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="duplicate-title"><div className="section-label">Possible duplicate</div><h2 id="duplicate-title">You already have a note like this.</h2><p className="empty">Keep it anyway, or cancel and continue with the existing note.</p><div className="actions"><button className="ghost" onClick={() => setDuplicate(null)}>Cancel</button><button className="primary" onClick={keepDuplicate}>Keep both</button></div></div></div>}
         {summaryOpen && <SummaryModal items={unresolved} onClose={() => setSummaryOpen(false)} />}
@@ -193,8 +237,26 @@ function Overview({ unresolved, weekItems, weekMinutes, categoryTotals, largestC
   return <div className="layout"><div className="stack"><section className="card stat-card"><div className="section-label">This week in view</div><div className="big-number">{formatMinutes(weekMinutes)}</div><p className="stat-sub">estimated across {weekItems.length} planned {weekItems.length === 1 ? "item" : "items"}. Add estimates during review to make this useful.</p><div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar"><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Unprocessed</div><h2>{unresolved.length ? `${unresolved.length} thought${unresolved.length === 1 ? "" : "s"} waiting` : "Your inbox is clear"}</h2></div><button className="ghost small-button" onClick={() => onTab("inbox")}>Open inbox</button></div>{unresolved.length ? <div className="item-list">{unresolved.slice(0, 4).map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Organize" />)}</div> : <p className="empty">Capture the next thing before it pulls you away.</p>}</section></div><div className="stack"><section className="card"><div className="section-label">The one move</div><h2 style={{ marginTop: 8 }}>Park the thought. Keep going.</h2><p className="empty">Your notes stay unresolved until you choose to organize them. Nothing gets scheduled without your approval.</p><button className="primary" style={{ marginTop: 16, width: "100%" }} onClick={onCapture}>Add a thought</button></section><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>What is taking space?</h2></div></div><p className="empty">{weekItems.length ? "Review the draft to spot conflicts and make the trade-off yourself." : "Organized items will appear here as a draft week."}</p><button className="ghost" style={{ marginTop: 15, width: "100%" }} onClick={() => onTab("week")}>Open This week</button></section></div></div>;
 }
 
-function ItemRow({ item, onOpen, action, footer }: { item: Item; onOpen: (item: Item) => void; action: string; footer?: React.ReactNode }) {
-  return <div className="item-row-wrap"><div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.splitFrom && <span className="tag subtle">↗ from a braindump</span>}{item.category && <span className="tag">{item.category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}</div></div><button className="ghost small-button" onClick={() => onOpen(item)}>{action}</button></div>{footer}</div>;
+function ItemRow({ item, onOpen, action, footer, onDone }: { item: Item; onOpen: (item: Item) => void; action: string; footer?: React.ReactNode; onDone?: (item: Item) => void }) {
+  return <div className="item-row-wrap"><div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.splitFrom && <span className="tag subtle">↗ from a braindump</span>}{item.category && <span className="tag">{item.category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}{item.done && <span className="tag accent">Done</span>}</div></div><div style={{ display: "flex", gap: 6 }}>{onDone && <button className={`ghost small-button${item.done ? " done" : ""}`} onClick={() => onDone(item)}>{item.done ? "Undo" : "Mark done"}</button>}<button className="ghost small-button" onClick={() => onOpen(item)}>{action}</button></div></div>{footer}</div>;
+}
+
+function DoneModal({ item, onConfirm, onSkip }: { item: Item; onConfirm: (minutes: number | undefined) => void; onSkip: () => void }) {
+  const [hours, setHours] = useState("");
+  const [minutes, setMinutes] = useState("");
+  function submit() {
+    const total = (Number(hours) || 0) * 60 + (Number(minutes) || 0);
+    onConfirm(total || undefined);
+  }
+  return <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="done-title">
+    <div className="card-header"><div><div className="section-label">Marked done</div><h2 id="done-title">How long did it actually take?</h2></div></div>
+    <p className="empty">{item.text}</p>
+    <div className="form-grid" style={{ marginTop: 14 }}>
+      <div className="field"><label htmlFor="actual-hours">Hours</label><input id="actual-hours" inputMode="numeric" value={hours} onChange={(event) => setHours(event.target.value)} placeholder="0" /></div>
+      <div className="field"><label htmlFor="actual-minutes">Minutes</label><input id="actual-minutes" inputMode="numeric" value={minutes} onChange={(event) => setMinutes(event.target.value)} placeholder="0" /></div>
+    </div>
+    <div className="actions"><button className="ghost" onClick={onSkip}>Skip</button><button className="primary" onClick={submit}>Save time</button></div>
+  </div></div>;
 }
 
 function Inbox({ items, allItems, archivedItems, onOpen, onSplit, onArchive, onSummary }: { items: Item[]; allItems: Item[]; archivedItems: Item[]; onOpen: (item: Item) => void; onSplit: (item: Item) => void; onArchive: (id: string) => void; onSummary: () => void }) {
@@ -297,21 +359,88 @@ function OrganizePanel({ item, onSave, onDelete, onClose }: { item: Item; onSave
   return <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="organize-title"><div className="card-header"><div><div className="section-label">Unprocessed note</div><h2 id="organize-title">Give it a place.</h2></div><button className="ghost small-button" onClick={onClose}>Close</button></div><div className="field full"><label htmlFor="item-text">Note</label><textarea id="item-text" value={draft.text} onChange={(event) => set({ text: event.target.value })} /></div><div className="field" style={{ marginTop: 14 }}><label>Category</label><div className="chips">{categories.map((category) => <button type="button" className={`chip ${draft.category === category ? "selected" : ""}`} key={category} onClick={() => set({ category })}>{category}</button>)}</div></div><div className="field" style={{ marginTop: 14 }}><label>When</label><div className="chips">{buckets.map((bucket) => <button type="button" className={`chip ${draft.bucket === bucket ? "selected" : ""}`} key={bucket} onClick={() => set({ bucket })}>{bucket}</button>)}</div></div><div className="form-grid" style={{ marginTop: 14 }}><div className="field"><label htmlFor="hours">Estimated hours</label><input id="hours" inputMode="numeric" value={hours} onChange={(event) => setHours(event.target.value)} placeholder="0" /></div><div className="field"><label htmlFor="minutes">Estimated minutes</label><input id="minutes" inputMode="numeric" value={minutes} onChange={(event) => setMinutes(event.target.value)} placeholder="0" /></div><div className="field"><label htmlFor="effort">Effort</label><select id="effort" value={draft.effort ?? ""} onChange={(event) => set({ effort: (event.target.value || undefined) as Item["effort"] })}><option value="">Not set</option><option>Low</option><option>Medium</option><option>High</option></select></div><div className="field"><label htmlFor="due">Due date</label><input id="due" type="date" value={draft.dueDate ?? ""} onChange={(event) => set({ dueDate: event.target.value || undefined })} /></div><div className="field full"><label htmlFor="project">Project name (optional)</label><input id="project" value={draft.project ?? ""} onChange={(event) => set({ project: event.target.value || undefined })} placeholder="e.g. MIS rollout" /></div></div>{!draft.bucket && <div className="notice">Leave it here if you are not ready to commit it. Blank fields are allowed.</div>}<div className="actions"><button className="danger" onClick={onDelete}>Delete</button><button className="ghost" onClick={onClose}>Cancel</button><button className="primary" onClick={save}>{draft.bucket ? "Commit to plan" : "Save in Unprocessed"}</button></div></div></div>;
 }
 
-function WeekView({ items, laterItems, weekMinutes, categoryTotals, largestCategory, conflicts, targets, onSaveTargets, onOpen }: { items: Item[]; laterItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; onSaveTargets: (targets: Targets) => void; onOpen: (item: Item) => void }) {
+function WeekView({ items, laterItems, weekMinutes, categoryTotals, largestCategory, conflicts, targets, onSaveTargets, onOpen, onDone }: { items: Item[]; laterItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; onSaveTargets: (targets: Targets) => void; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
   // Local editing draft, seeded from the saved targets. WeekView only mounts
   // after storage has loaded, so this always starts from real saved values.
   const [draftTargets, setDraftTargets] = useState<Targets>(targets);
-  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>Your week, at a glance.</h2></div><span className="tag accent">{formatMinutes(weekMinutes)} estimated</span></div>{conflicts.length > 0 && <div className="notice">This draft is above the target for {conflicts.map((item) => item.category).join(", ")}. Choose the trade-off yourself; nothing moved automatically.</div>}<div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar" style={{ background: "var(--paper-deep)" }}><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Items in the draft</div><h2>What is taking space?</h2></div></div>{items.length ? <div className="item-list">{items.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" />)}</div> : <p className="empty">Organize an item and choose Today or This Week to see it here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Later</div><h2>Parked, not forgotten.</h2></div><span className="tag">{laterItems.length}</span></div>{laterItems.length ? <div className="item-list">{laterItems.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" />)}</div> : <p className="empty">Items you commit to Later wait here until you pull them into a week.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Optional setup</div><h2>Set weekly targets.</h2></div></div><p className="empty">Targets help the draft show where your time is going. You can skip this and return here later.</p><div className="form-grid" style={{ marginTop: 14 }}>{categories.map((category) => <div className="field" key={category}><label htmlFor={`target-${category}`}>{category} hours</label><input id={`target-${category}`} type="number" min="0" step="0.5" value={draftTargets[category] ?? ""} onChange={(event) => setDraftTargets({ ...draftTargets, [category]: event.target.value ? Number(event.target.value) : undefined })} placeholder="Not set" /></div>)}</div><div className="actions"><button className="primary" onClick={() => onSaveTargets(draftTargets)}>Save targets</button></div></section></div>;
+  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>Your week, at a glance.</h2></div><span className="tag accent">{formatMinutes(weekMinutes)} estimated</span></div>{conflicts.length > 0 && <div className="notice">This draft is above the target for {conflicts.map((item) => item.category).join(", ")}. Choose the trade-off yourself; nothing moved automatically.</div>}<div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar" style={{ background: "var(--paper-deep)" }}><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Items in the draft</div><h2>What is taking space?</h2></div></div>{items.length ? <div className="item-list">{items.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Organize an item and choose Today or This Week to see it here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Later</div><h2>Parked, not forgotten.</h2></div><span className="tag">{laterItems.length}</span></div>{laterItems.length ? <div className="item-list">{laterItems.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Items you commit to Later wait here until you pull them into a week.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Optional setup</div><h2>Set weekly targets.</h2></div></div><p className="empty">Targets help the draft show where your time is going. You can skip this and return here later.</p><div className="form-grid" style={{ marginTop: 14 }}>{categories.map((category) => <div className="field" key={category}><label htmlFor={`target-${category}`}>{category} hours</label><input id={`target-${category}`} type="number" min="0" step="0.5" value={draftTargets[category] ?? ""} onChange={(event) => setDraftTargets({ ...draftTargets, [category]: event.target.value ? Number(event.target.value) : undefined })} placeholder="Not set" /></div>)}</div><div className="actions"><button className="primary" onClick={() => onSaveTargets(draftTargets)}>Save targets</button></div></section></div>;
 }
 
-function ReflectionPanel({ unresolved, reflections, onOpen, onSave }: { unresolved: Item[]; reflections: Reflection[]; onOpen: (item: Item) => void; onSave: (type: "daily" | "weekly", text: string) => void }) {
-  const [dailyFields, setDailyFields] = useState({ done: "", carry: "", drop: "", reflection: "" });
+function ReflectionPanel({ doneToday, openItems, allItems, reflections, onOpen, onDrop, onReplace, onSave }: { doneToday: Item[]; openItems: Item[]; allItems: Item[]; reflections: Reflection[]; onOpen: (item: Item) => void; onDrop: (id: string) => void; onReplace: (originalId: string, chosenId: string) => void; onSave: (type: "daily" | "weekly", text: string) => void }) {
+  // Items you've already decided on this sitting - Carry forward makes no
+  // storage change (there is nothing to "carry," the item just stays where
+  // it is), so this local set is the only record that you've dealt with it,
+  // purely so you are not asked about the same item twice in one visit.
+  const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
+  const [replacing, setReplacing] = useState<Item | null>(null);
+  const [freeText, setFreeText] = useState("");
   const [weeklyFields, setWeeklyFields] = useState({ well: "", unfinished: "", change: "", priorities: "" });
-  const setDaily = (key: keyof typeof dailyFields, value: string) => setDailyFields((current) => ({ ...current, [key]: value }));
   const setWeekly = (key: keyof typeof weeklyFields, value: string) => setWeeklyFields((current) => ({ ...current, [key]: value }));
-  const dailyText = Object.entries(dailyFields).filter(([, value]) => value.trim()).map(([key, value]) => `${key}: ${value}`).join("\n");
   const weeklyText = Object.entries(weeklyFields).filter(([, value]) => value.trim()).map(([key, value]) => `${key}: ${value}`).join("\n");
-  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">End of day</div><h2>Close the loops gently.</h2></div></div>{unresolved.length > 0 && <><p className="empty">These unresolved items are waiting for a decision.</p><div className="item-list" style={{ marginTop: 12 }}>{unresolved.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Resolve" />)}</div></>}<div className="review-grid" style={{ marginTop: 18 }}><ReviewCard title="Done" value={dailyFields.done} setValue={(value) => setDaily("done", value)} /><ReviewCard title="Carry forward" value={dailyFields.carry} setValue={(value) => setDaily("carry", value)} /><ReviewCard title="Drop or replace" value={dailyFields.drop} setValue={(value) => setDaily("drop", value)} /></div><div className="field" style={{ marginTop: 14 }}><label htmlFor="daily-reflection">Free reflection</label><textarea id="daily-reflection" value={dailyFields.reflection} onChange={(event) => setDaily("reflection", event.target.value)} placeholder="What did today teach you?" /></div><div className="actions"><button className="primary" onClick={() => { onSave("daily", dailyText); setDailyFields({ done: "", carry: "", drop: "", reflection: "" }); }}>Save daily reflection</button></div></section><section className="card"><div className="section-label">End of week</div><h2 style={{ marginTop: 8 }}>Make the next week lighter.</h2><div className="review-grid" style={{ marginTop: 18 }}><ReviewCard title="What went well?" value={weeklyFields.well} setValue={(value) => setWeekly("well", value)} /><ReviewCard title="What stayed unfinished?" value={weeklyFields.unfinished} setValue={(value) => setWeekly("unfinished", value)} /><ReviewCard title="What should change next week?" value={weeklyFields.change} setValue={(value) => setWeekly("change", value)} /><ReviewCard title="Next week’s priorities" value={weeklyFields.priorities} setValue={(value) => setWeekly("priorities", value)} /></div><div className="actions"><button className="primary" onClick={() => { onSave("weekly", weeklyText); setWeeklyFields({ well: "", unfinished: "", change: "", priorities: "" }); }}>Save weekly review</button></div></section>{reflections.length > 0 && <section className="card"><div className="section-label">Recent reflections</div><div className="item-list" style={{ marginTop: 14 }}>{reflections.slice(0, 5).map((item) => <div className="item-row" key={item.id}><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta"><span className="tag">{item.type}</span><span className="tag">{new Date(item.createdAt).toLocaleDateString()}</span></div></div></div>)}</div></section>}</div>;
+
+  const visibleOpen = openItems.filter((item) => !acknowledged.has(item.id));
+
+  function acknowledge(id: string) {
+    setAcknowledged((current) => new Set(current).add(id));
+  }
+
+  function saveDaily() {
+    const summary = [doneToday.length ? `Done: ${doneToday.map((item) => item.text).join("; ")}.` : "", freeText.trim()].filter(Boolean).join("\n");
+    if (!summary.trim()) return;
+    onSave("daily", summary);
+    setFreeText("");
+  }
+
+  return <div className="stack">
+    <section className="card">
+      <div className="card-header"><div><div className="section-label">End of day</div><h2>Close the loops gently.</h2></div></div>
+
+      <div className="field full">
+        <label>Done today ({doneToday.length})</label>
+        {doneToday.length ? <div className="item-list" style={{ marginTop: 8 }}>{doneToday.map((item) => <div className="item-row" key={item.id}><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta"><span className="tag accent">Done</span>{item.actualMinutes ? <span className="tag">{formatMinutes(item.actualMinutes)} actual</span> : null}</div></div></div>)}</div> : <p className="empty">Nothing marked done yet today. Mark items done from Unprocessed or This week as you finish them.</p>}
+      </div>
+
+      <div className="field full" style={{ marginTop: 18 }}>
+        <label>Open items ({visibleOpen.length})</label>
+        {visibleOpen.length ? <div className="item-list" style={{ marginTop: 8 }}>{visibleOpen.map((item) => <div className="item-row-wrap" key={item.id}>
+          <div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.category && <span className="tag">{item.category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}</div></div><button className="ghost small-button" onClick={() => onOpen(item)}>Edit</button></div>
+          <div className="row-footer">
+            <button className="ghost small-button" onClick={() => acknowledge(item.id)}>Carry forward</button>
+            <button className="ghost small-button" onClick={() => { onDrop(item.id); acknowledge(item.id); }}>Drop</button>
+            <button className="ghost small-button" onClick={() => setReplacing(item)}>Replace</button>
+          </div>
+        </div>)}</div> : <p className="empty">Nothing open right now.</p>}
+      </div>
+
+      <div className="field" style={{ marginTop: 18 }}>
+        <label htmlFor="daily-reflection">Free reflection</label>
+        <textarea id="daily-reflection" value={freeText} onChange={(event) => setFreeText(event.target.value)} placeholder="What did today teach you?" />
+      </div>
+      <div className="actions"><button className="primary" onClick={saveDaily}>Save daily reflection</button></div>
+    </section>
+    <section className="card"><div className="section-label">End of week</div><h2 style={{ marginTop: 8 }}>Make the next week lighter.</h2><div className="review-grid" style={{ marginTop: 18 }}><ReviewCard title="What went well?" value={weeklyFields.well} setValue={(value) => setWeekly("well", value)} /><ReviewCard title="What stayed unfinished?" value={weeklyFields.unfinished} setValue={(value) => setWeekly("unfinished", value)} /><ReviewCard title="What should change next week?" value={weeklyFields.change} setValue={(value) => setWeekly("change", value)} /><ReviewCard title="Next week’s priorities" value={weeklyFields.priorities} setValue={(value) => setWeekly("priorities", value)} /></div><div className="actions"><button className="primary" onClick={() => { onSave("weekly", weeklyText); setWeeklyFields({ well: "", unfinished: "", change: "", priorities: "" }); }}>Save weekly review</button></div></section>
+    {reflections.length > 0 && <section className="card"><div className="section-label">Recent reflections</div><div className="item-list" style={{ marginTop: 14 }}>{reflections.slice(0, 5).map((item) => <div className="item-row" key={item.id}><div className="item-main"><div className="item-text" style={{ whiteSpace: "pre-line" }}>{item.text}</div><div className="item-meta"><span className="tag">{item.type}</span><span className="tag">{new Date(item.createdAt).toLocaleDateString()}</span></div></div></div>)}</div></section>}
+    {replacing && <ReplacePanel original={replacing} allItems={allItems} onChoose={(chosenId) => { onReplace(replacing.id, chosenId); acknowledge(replacing.id); setReplacing(null); }} onJustDrop={() => { onDrop(replacing.id); acknowledge(replacing.id); setReplacing(null); }} onClose={() => setReplacing(null)} />}
+  </div>;
+}
+
+function ReplacePanel({ original, allItems, onChoose, onJustDrop, onClose }: { original: Item; allItems: Item[]; onChoose: (chosenId: string) => void; onJustDrop: () => void; onClose: () => void }) {
+  const [choosing, setChoosing] = useState(false);
+
+  if (!choosing) {
+    return <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="replace-title">
+      <div className="card-header"><div><div className="section-label">Replace</div><h2 id="replace-title">Pick something now, or later?</h2></div><button className="ghost small-button" onClick={onClose}>Close</button></div>
+      <p className="empty">“{original.text}” will be dropped either way. Fill its spot with something else now, or leave it empty for now.</p>
+      <div className="actions"><button className="ghost" onClick={onJustDrop}>Just drop it</button><button className="primary" onClick={() => setChoosing(true)}>Pick a replacement</button></div>
+    </div></div>;
+  }
+
+  const ranked = rankReplacementCandidates(original, allItems);
+  return <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="replace-pick-title">
+    <div className="card-header"><div><div className="section-label">Replace</div><h2 id="replace-pick-title">Choose what fills this spot.</h2></div><button className="ghost small-button" onClick={onClose}>Close</button></div>
+    <p className="empty">Dropping “{original.text}” ({formatMinutes(original.estimateMinutes)}). Items that fit the same time or less are listed first.</p>
+    {ranked.length ? <div className="item-list" style={{ marginTop: 12 }}>{ranked.map(({ item, longer }) => <div className="item-row" key={item.id}><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta"><span className="tag accent">{formatMinutes(item.estimateMinutes)}</span>{longer && <span className="tag">Takes longer</span>}</div></div><button className="ghost small-button" onClick={() => onChoose(item.id)}>Choose</button></div>)}</div> : <p className="empty">Nothing else has a time estimate yet to swap in. Add an estimate to another item first.</p>}
+  </div></div>;
 }
 
 function ReviewCard({ title, value, setValue }: { title: string; value: string; setValue: (value: string) => void }) { return <div className="review-card"><h3>{title}</h3><textarea value={value} onChange={(event) => setValue(event.target.value)} placeholder="Add a note…" /></div>; }
