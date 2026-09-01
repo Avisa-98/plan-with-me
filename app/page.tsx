@@ -11,7 +11,7 @@ import { effectiveCategory, sortProjectsDoneLast, subtaskTotalMinutes, subtasksO
 
 const categories: Category[] = ["Work", "Family", "Friends", "Health", "Personal"];
 const buckets: Bucket[] = ["Today", "This Week", "Later"];
-type Tab = "home" | "inbox" | "week" | "reflections";
+type Tab = "today" | "inbox" | "week" | "reflections";
 
 function formatMinutes(minutes?: number) {
   if (!minutes) return "Estimate needed";
@@ -44,7 +44,7 @@ function CaptureForm({ capture, setCapture, onSubmit, onCancel, autoFocus }: { c
 export default function Home() {
   const [data, setData] = useState<StoredData>(() => emptyData());
   const [ready, setReady] = useState(false);
-  const [tab, setTab] = useState<Tab>("home");
+  const [tab, setTab] = useState<Tab>("today");
   const [capture, setCapture] = useState("");
   // Whether the full capture form is expanded on a non-Overview tab - those
   // tabs show a compact button instead, so their own content isn't pushed
@@ -61,6 +61,10 @@ export default function Home() {
   // set when turning Done ON, since turning it off needs no such prompt.
   const [markingDone, setMarkingDone] = useState<Item | null>(null);
   const [toast, setToast] = useState("");
+  // Starts "light" only as a placeholder - the blocking script in
+  // layout.tsx already set the real theme on the page before React ever
+  // ran, so the effect below just reads that back rather than guessing.
+  const [theme, setTheme] = useState<"light" | "dark">("light");
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [summary, setSummary] = useState<Reflection | null>(null);
 
@@ -83,9 +87,26 @@ export default function Home() {
     setCaptureExpanded(false);
   }, [tab]);
 
+  useEffect(() => {
+    const current = document.documentElement.getAttribute("data-theme");
+    if (current === "dark" || current === "light") setTheme(current);
+  }, []);
+
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("plan-with-me:theme", next);
+  }
+
   const targets = data.targets;
   const unresolved = data.items.filter(isUnresolved);
   const weekItems = data.items.filter(isWeekItem);
+  // What Today actually shows: items you committed straight to Today, plus
+  // (separately) items you put in This Week but never pinned to Today - so
+  // that second group doesn't require a trip to the This Week tab to see.
+  const todayItems = weekItems.filter((item) => item.bucket === "Today");
+  const thisWeekItems = weekItems.filter((item) => item.bucket === "This Week");
   const laterItems = data.items.filter(isLater);
   const archivedItems = data.items.filter(isArchived);
   const ideaItems = data.items.filter(isIdea);
@@ -198,6 +219,15 @@ export default function Home() {
     updateData((current) => ({ ...current, items: current.items.map((item) => item.id === updated.id ? { ...updated, updatedAt: new Date().toISOString() } : item) }));
     setSelected(null);
     showToast(updated.type === "idea" ? "Added to your idea log." : updated.status === "Planned" ? "Added to your draft week." : "Saved in Inbox.");
+  }
+
+  // One tap from the Inbox row - no need to open Organize just to say
+  // "this goes in Today." Category, estimate, and everything else stay
+  // untouched, exactly as blank as they already were; Organize is still
+  // there afterward if you want to add those.
+  function quickCommit(id: string, bucket: Bucket) {
+    updateData((current) => ({ ...current, items: current.items.map((item) => item.id === id ? { ...item, bucket, status: "Planned", updatedAt: new Date().toISOString() } : item) }));
+    showToast(`Added to ${bucket}.`);
   }
 
   function deleteItem(id: string) {
@@ -315,7 +345,7 @@ export default function Home() {
   }
 
   const nav = [
-    ["home", "Overview"],
+    ["today", "Today"],
     ["inbox", `Inbox${unresolved.length ? ` · ${unresolved.length}` : ""}`],
     ["week", "This week"],
     ["reflections", "Reflections"],
@@ -326,6 +356,9 @@ export default function Home() {
   return (
     <main className="app-shell">
       <div className="app-frame">
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+          <button className="theme-toggle" onClick={toggleTheme} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>{theme === "dark" ? "☀️" : "🌙"}</button>
+        </div>
         {/* The full hero sells the product to someone with nothing saved yet.
             Once there's real content, it would just push that content down
             on every visit - so a returning user gets a compact title bar
@@ -338,15 +371,6 @@ export default function Home() {
         ) : (
           <header className="topbar-compact"><span className="eyebrow">Plan With Me</span></header>
         )}
-        <div className="device-banner">
-          <p>Saved on this device only — no account, no cloud backup. Clearing your browser data clears your plan.</p>
-          <div className="device-banner-actions">
-            <button className="ghost small-button" onClick={exportBackup}>Export backup</button>
-            <button className="ghost small-button" onClick={() => document.getElementById("import-file")?.click()}>Import backup</button>
-            <button className="ghost small-button" onClick={exportMarkdownBackup}>Export as Markdown</button>
-            <input id="import-file" type="file" accept="application/json" style={{ display: "none" }} onChange={(event) => { const file = event.target.files?.[0]; if (file) importBackup(file); event.target.value = ""; }} />
-          </div>
-        </div>
         <nav className="nav" aria-label="Primary navigation">
           {nav.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</button>)}
         </nav>
@@ -355,7 +379,7 @@ export default function Home() {
             whole job is capture. Elsewhere it stays a compact button so a
             tab's own content isn't pushed below the fold by a form most
             visits to that tab don't need. */}
-        {tab === "home" ? (
+        {tab === "today" ? (
           <CaptureForm capture={capture} setCapture={setCapture} onSubmit={addThought} />
         ) : captureExpanded ? (
           <CaptureForm capture={capture} setCapture={setCapture} onSubmit={addThought} onCancel={() => setCaptureExpanded(false)} autoFocus />
@@ -363,10 +387,20 @@ export default function Home() {
           <button type="button" className="capture-compact" onClick={() => setCaptureExpanded(true)}>Add a thought</button>
         )}
 
-        {tab === "home" && <Overview unresolved={unresolved} weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} projects={data.projects} onOpen={(item) => setSelected(item)} onTab={setTab} />}
-        {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} ideaItems={ideaItems} archivedItems={archivedItems} projects={data.projects} onSaveItem={saveItem} onDeleteItem={deleteItem} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onOpenProject={(project) => setProjectPanel(project)} onCreateProject={createProject} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
+        {tab === "today" && <TodayView todayItems={todayItems} thisWeekItems={thisWeekItems} projects={data.projects} onOpen={(item) => setSelected(item)} onDone={toggleDone} />}
+        {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} ideaItems={ideaItems} archivedItems={archivedItems} projects={data.projects} onSaveItem={saveItem} onDeleteItem={deleteItem} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onOpenProject={(project) => setProjectPanel(project)} onCreateProject={createProject} onDone={toggleDone} onQuickCommit={quickCommit} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
         {tab === "week" && <PlanTab weekItems={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} projects={data.projects} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} onDone={toggleDone} committedItems={committedItems} />}
         {tab === "reflections" && <ReflectionPanel doneToday={doneToday} doneThisWeek={doneThisWeek} unfinishedThisWeek={unfinishedThisWeek} openItems={openItems} allItems={data.items} projects={data.projects} reflections={data.reflections} onOpen={(item) => setSelected(item)} onDrop={deleteItem} onReplace={replaceItem} onDone={toggleDone} onSave={saveReflection} />}
+
+        <div className="device-banner" style={{ marginTop: 18 }}>
+          <p>Saved on this device only — no account, no cloud backup. Clearing your browser data clears your plan.</p>
+          <div className="device-banner-actions">
+            <button className="ghost small-button" onClick={exportBackup}>Export backup</button>
+            <button className="ghost small-button" onClick={() => document.getElementById("import-file")?.click()}>Import backup</button>
+            <button className="ghost small-button" onClick={exportMarkdownBackup}>Export as Markdown</button>
+            <input id="import-file" type="file" accept="application/json" style={{ display: "none" }} onChange={(event) => { const file = event.target.files?.[0]; if (file) importBackup(file); event.target.value = ""; }} />
+          </div>
+        </div>
 
         {selected && <OrganizePanel item={selected} projects={data.projects} onSave={saveItem} onDelete={() => deleteItem(selected.id)} onClose={() => setSelected(null)} onSplit={() => { setSplitting(selected); setSelected(null); }} onCreateProject={createProject} />}
         {projectPanel && <ProjectPanel project={data.projects.find((project) => project.id === projectPanel.id) ?? projectPanel} allProjects={data.projects} subtasks={subtasksOf(projectPanel.id, data.items)} onAddSubtask={(text) => addSubtask(projectPanel.id, text)} onSaveSubtask={saveItem} onDeleteSubtask={deleteItem} onSplitSubtask={(item) => { setSplitting(item); setProjectPanel(null); }} onDoneSubtask={toggleDone} onCreateProject={createProject} onSave={saveProject} onToggleDone={(done) => toggleProjectDone(projectPanel.id, done)} onDelete={() => deleteProject(projectPanel.id)} onClose={() => setProjectPanel(null)} />}
@@ -380,8 +414,18 @@ export default function Home() {
   );
 }
 
-function Overview({ unresolved, weekItems, weekMinutes, categoryTotals, largestCategory, projects, onOpen, onTab }: { unresolved: Item[]; weekItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; projects: Project[]; onOpen: (item: Item) => void; onTab: (tab: Tab) => void }) {
-  return <div className="layout"><div className="stack"><section className="card stat-card"><div className="section-label">This week in view</div>{weekItems.length > 0 ? <><div className="big-number">{formatMinutes(weekMinutes)}</div><p className="stat-sub">estimated across {weekItems.length} planned {weekItems.length === 1 ? "item" : "items"}. Add estimates during review to make this useful.</p><div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar"><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></> : <p className="stat-sub" style={{ marginTop: 8 }}>Add a thought, then organize it into this week to see your time here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Inbox</div><h2>{unresolved.length ? `${unresolved.length} thought${unresolved.length === 1 ? "" : "s"} waiting` : "Your inbox is clear"}</h2></div><button className="ghost" onClick={() => onTab("inbox")}>Open inbox</button></div>{unresolved.length ? <div className="item-list">{unresolved.slice(0, 4).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Organize" />)}</div> : <p className="empty">Add the next thought before it pulls you away.</p>}</section></div><div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>What is taking space?</h2></div></div><p className="empty">{weekItems.length ? "Review the draft to spot conflicts and make the trade-off yourself." : "Organized items will appear here as a draft week."}</p><button className="ghost" style={{ marginTop: 15, width: "100%" }} onClick={() => onTab("week")}>Open This week</button></section></div></div>;
+function TodayView({ todayItems, thisWeekItems, projects, onOpen, onDone }: { todayItems: Item[]; thisWeekItems: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+  return <div className="stack">
+    <section className="card">
+      <div className="card-header"><div><div className="section-label">Today</div><h2>{todayItems.length ? `${todayItems.length} thing${todayItems.length === 1 ? "" : "s"} today` : "Nothing committed to today yet"}</h2></div></div>
+      {todayItems.length ? <div className="item-list">{sortDoneLast(todayItems).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Organize a note from Inbox and choose Today to see it here.</p>}
+    </section>
+
+    <section className="card">
+      <div className="card-header"><div><div className="section-label">This week, not on a specific day</div><h2>Still open for the week</h2></div></div>
+      {thisWeekItems.length ? <div className="item-list">{sortDoneLast(thisWeekItems).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Nothing else queued for this week.</p>}
+    </section>
+  </div>;
 }
 
 function ItemRow({ item, projects, onOpen, action, footer, onDone }: { item: Item; projects: Project[]; onOpen: (item: Item) => void; action: string; footer?: React.ReactNode; onDone?: (item: Item) => void }) {
@@ -423,7 +467,7 @@ function DoneModal({ item, onConfirm, onSkip }: { item: Item; onConfirm: (minute
   </div></div>;
 }
 
-function Inbox({ items, allItems, ideaItems, archivedItems, projects, onSaveItem, onDeleteItem, onSplit, onArchive, onOpenProject, onCreateProject, onSummary }: { items: Item[]; allItems: Item[]; ideaItems: Item[]; archivedItems: Item[]; projects: Project[]; onSaveItem: (item: Item) => void; onDeleteItem: (id: string) => void; onSplit: (item: Item) => void; onArchive: (id: string) => void; onOpenProject: (project: Project) => void; onCreateProject: (project: Project) => void; onSummary: () => void }) {
+function Inbox({ items, allItems, ideaItems, archivedItems, projects, onSaveItem, onDeleteItem, onSplit, onArchive, onOpenProject, onCreateProject, onDone, onQuickCommit, onSummary }: { items: Item[]; allItems: Item[]; ideaItems: Item[]; archivedItems: Item[]; projects: Project[]; onSaveItem: (item: Item) => void; onDeleteItem: (id: string) => void; onSplit: (item: Item) => void; onArchive: (id: string) => void; onOpenProject: (project: Project) => void; onCreateProject: (project: Project) => void; onDone: (item: Item) => void; onQuickCommit: (id: string, bucket: Bucket) => void; onSummary: () => void }) {
   const [newProjectName, setNewProjectName] = useState("");
 
   function createProject() {
@@ -434,12 +478,13 @@ function Inbox({ items, allItems, ideaItems, archivedItems, projects, onSaveItem
     setNewProjectName("");
   }
 
-  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Inbox</div><h2>Decide when you have space.</h2></div><button className="ghost small-button" onClick={onSummary} disabled={!items.length}>Summarize unresolved</button></div>{items.length ? <OrganizableList items={items} action="Organize" projects={projects} onSaveItem={onSaveItem} onDeleteItem={onDeleteItem} onSplitItem={onSplit} onCreateProject={onCreateProject} footer={(item) => {
+  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Inbox</div><h2>Decide when you have space.</h2></div><button className="ghost small-button" onClick={onSummary} disabled={!items.length}>Summarize unresolved</button></div>{items.length ? <OrganizableList items={sortDoneLast(items)} action="Organize" projects={projects} onDone={onDone} onSaveItem={onSaveItem} onDeleteItem={onDeleteItem} onSplitItem={onSplit} onCreateProject={onCreateProject} footer={(item) => {
     const childCount = allItems.filter((candidate) => candidate.splitFrom === item.id).length;
-    return childCount > 0 ? <div className="row-footer">
-      <span className="hint">⤷ {childCount} item{childCount === 1 ? "" : "s"} split out</span>
-      <button className="ghost small-button" onClick={() => onArchive(item.id)}>Nothing left in this note</button>
-    </div> : undefined;
+    return <div className="row-footer">
+      {buckets.map((bucket) => <button type="button" className="ghost small-button" key={bucket} onClick={() => onQuickCommit(item.id, bucket)}>{bucket}</button>)}
+      {childCount > 0 && <span className="hint">⤷ {childCount} item{childCount === 1 ? "" : "s"} split out</span>}
+      {childCount > 0 && <button className="ghost small-button" onClick={() => onArchive(item.id)}>Nothing left in this note</button>}
+    </div>;
   }} /> : <p className="empty">Nothing waiting here. Add a thought whenever one arrives.</p>}</section>
 
     <section className="card">
@@ -698,10 +743,13 @@ function WeekView({ items, laterItems, weekMinutes, categoryTotals, largestCateg
   // Local editing draft, seeded from the saved targets. WeekView only mounts
   // after storage has loaded, so this always starts from real saved values.
   const [draftTargets, setDraftTargets] = useState<Targets>(targets);
+  // Collapsed by default unless a target is already set - editing existing
+  // targets shouldn't require rediscovering them first.
+  const [showTargets, setShowTargets] = useState(() => Object.values(targets).some((value) => value !== undefined));
   const weekStart = startOfWeek(new Date());
   const weekEnd = addDays(weekStart, 6);
   const weekRange = `${weekStart.toLocaleDateString(undefined, { month: "long", day: "numeric" })} – ${weekEnd.toLocaleDateString(undefined, { month: "long", day: "numeric" })}`;
-  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>Your week, at a glance.</h2><p className="hint" style={{ marginTop: 4 }}>{weekRange}</p></div><span className="tag accent">{estimateTag(weekMinutes)}</span></div>{conflicts.length > 0 && <div className="notice">This draft is above the target for {conflicts.map((item) => item.category).join(", ")}. Choose the trade-off yourself; nothing moved automatically.</div>}<div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar" style={{ background: "var(--paper-deep)" }}><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Items in the draft</div><h2>What is taking space?</h2></div></div>{items.length ? <div className="item-list">{sortDoneLast(items).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Organize an item and choose Today or This Week to see it here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Later</div><h2>Parked, not forgotten.</h2></div><span className="tag">{laterItems.length}</span></div>{laterItems.length ? <div className="item-list">{sortDoneLast(laterItems).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Items you commit to Later wait here until you pull them into a week.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Optional setup</div><h2>Set weekly targets.</h2></div></div><p className="empty">Targets help the draft show where your time is going. You can skip this and return here later.</p><div className="form-grid" style={{ marginTop: 14 }}>{categories.map((category) => <div className="field" key={category}><label htmlFor={`target-${category}`}>{category} hours</label><input id={`target-${category}`} type="number" min="0" step="0.5" value={draftTargets[category] ?? ""} onChange={(event) => setDraftTargets({ ...draftTargets, [category]: event.target.value ? Number(event.target.value) : undefined })} placeholder="Not set" /></div>)}</div><div className="actions"><button className="primary" onClick={() => onSaveTargets(draftTargets)}>Save targets</button></div></section></div>;
+  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>Your week, at a glance.</h2><p className="hint" style={{ marginTop: 4 }}>{weekRange}</p></div><span className="tag accent">{estimateTag(weekMinutes)}</span></div>{conflicts.length > 0 && <div className="notice">This draft is above the target for {conflicts.map((item) => item.category).join(", ")}. Choose the trade-off yourself; nothing moved automatically.</div>}<div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar" style={{ background: "var(--paper-deep)" }}><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Items in the draft</div><h2>What is taking space?</h2></div></div>{items.length ? <div className="item-list">{sortDoneLast(items).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Organize an item and choose Today or This Week to see it here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Later</div><h2>Parked, not forgotten.</h2></div><span className="tag">{laterItems.length}</span></div>{laterItems.length ? <div className="item-list">{sortDoneLast(laterItems).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Items you commit to Later wait here until you pull them into a week.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Optional setup</div><h2>Weekly targets</h2></div><button type="button" className="ghost small-button" onClick={() => setShowTargets((current) => !current)}>{showTargets ? "Hide" : "Set targets"}</button></div>{showTargets && <><p className="empty">Targets help the draft show where your time is going. You can skip this and return here later.</p><div className="form-grid" style={{ marginTop: 14 }}>{categories.map((category) => <div className="field" key={category}><label htmlFor={`target-${category}`}>{category} hours</label><input id={`target-${category}`} type="number" min="0" step="0.5" value={draftTargets[category] ?? ""} onChange={(event) => setDraftTargets({ ...draftTargets, [category]: event.target.value ? Number(event.target.value) : undefined })} placeholder="Not set" /></div>)}</div><div className="actions"><button className="primary" onClick={() => onSaveTargets(draftTargets)}>Save targets</button></div></>}</section></div>;
 }
 
 // The "This week" tab: one set of data, four lenses on it. Category is the

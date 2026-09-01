@@ -91,6 +91,7 @@ Possible future additions:
 - Optional streaks, progress views, or small rewards.
 - A workload and burnout-risk review based on user-entered commitments.
 - Positive reinforcement for deferring work and protecting rest.
+- A habit tracker, tagged to the same five categories items already use (Work, Family, Friends, Health, Personal) so a habit's streak counts toward its category the same way a task's time does - lets someone build a habit incrementally rather than only tracking one-off tasks. Raised during the v1 flow-review conversation, deliberately not built for v1.
 
 ### Module 6 — Life balance dashboard
 
