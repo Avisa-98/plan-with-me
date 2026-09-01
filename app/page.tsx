@@ -5,7 +5,7 @@ import { Bucket, Category, Item, ItemType, Reflection, StoredData, Targets, empt
 import { exportMarkdown } from "../lib/exportMarkdown";
 import { isArchived, isIdea, isLater, isUnresolved, isWeekItem, sortDoneLast } from "../lib/views";
 import { joinSelected, segmentText } from "../lib/split";
-import { isDoneToday, rankReplacementCandidates } from "../lib/reflect";
+import { isDoneToday, isDoneThisWeek, rankReplacementCandidates } from "../lib/reflect";
 import { addDays, itemsOnDate, startOfMonth, startOfWeek, toDateKey, unscheduledItems } from "../lib/schedule";
 
 const categories: Category[] = ["Work", "Family", "Friends", "Health", "Personal"];
@@ -88,6 +88,8 @@ export default function Home() {
   const archivedItems = data.items.filter(isArchived);
   const ideaItems = data.items.filter(isIdea);
   const doneToday = data.items.filter((item) => isDoneToday(item, new Date()));
+  const doneThisWeek = data.items.filter((item) => isDoneThisWeek(item, new Date()));
+  const unfinishedThisWeek = weekItems.filter((item) => !item.done);
   const openItems = data.items.filter((item) => !isArchived(item) && !item.done);
   // Everything actually committed to a plan - the pool the Day/Week-by-day/
   // Month views draw from, since raw Inbox notes have nothing to put
@@ -320,7 +322,7 @@ export default function Home() {
         {tab === "home" && <Overview unresolved={unresolved} weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} onOpen={(item) => setSelected(item)} onTab={setTab} />}
         {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} ideaItems={ideaItems} archivedItems={archivedItems} onOpen={(item) => setSelected(item)} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
         {tab === "week" && <PlanTab weekItems={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} onDone={toggleDone} committedItems={committedItems} />}
-        {tab === "reflections" && <ReflectionPanel doneToday={doneToday} openItems={openItems} allItems={data.items} reflections={data.reflections} onOpen={(item) => setSelected(item)} onDrop={deleteItem} onReplace={replaceItem} onSave={saveReflection} />}
+        {tab === "reflections" && <ReflectionPanel doneToday={doneToday} doneThisWeek={doneThisWeek} unfinishedThisWeek={unfinishedThisWeek} openItems={openItems} allItems={data.items} reflections={data.reflections} onOpen={(item) => setSelected(item)} onDrop={deleteItem} onReplace={replaceItem} onDone={toggleDone} onSave={saveReflection} />}
 
         {selected && <OrganizePanel item={selected} onSave={saveItem} onDelete={() => deleteItem(selected.id)} onClose={() => setSelected(null)} onSplit={() => { setSplitting(selected); setSelected(null); }} />}
         {markingDone && <DoneModal item={markingDone} onConfirm={(minutes) => confirmDone(markingDone.id, minutes)} onSkip={() => confirmDone(markingDone.id, undefined)} />}
@@ -627,22 +629,42 @@ function MonthPlanView({ month, setMonth, items, unscheduled, onOpen, onDone, on
   </div>;
 }
 
-function ReflectionPanel({ doneToday, openItems, allItems, reflections, onOpen, onDrop, onReplace, onSave }: { doneToday: Item[]; openItems: Item[]; allItems: Item[]; reflections: Reflection[]; onOpen: (item: Item) => void; onDrop: (id: string) => void; onReplace: (originalId: string, chosenId: string) => void; onSave: (type: "daily" | "weekly", text: string) => void }) {
+function ReflectionPanel({ doneToday, doneThisWeek, unfinishedThisWeek, openItems, allItems, reflections, onOpen, onDrop, onReplace, onDone, onSave }: { doneToday: Item[]; doneThisWeek: Item[]; unfinishedThisWeek: Item[]; openItems: Item[]; allItems: Item[]; reflections: Reflection[]; onOpen: (item: Item) => void; onDrop: (id: string) => void; onReplace: (originalId: string, chosenId: string) => void; onDone: (item: Item) => void; onSave: (type: "daily" | "weekly", text: string) => void }) {
   // Items you've already decided on this sitting - Carry forward makes no
   // storage change (there is nothing to "carry," the item just stays where
   // it is), so this local set is the only record that you've dealt with it,
   // purely so you are not asked about the same item twice in one visit.
+  // Daily and weekly track this separately - carrying something forward in
+  // one is not a decision about the other.
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
-  const [replacing, setReplacing] = useState<Item | null>(null);
+  const [weeklyAcknowledged, setWeeklyAcknowledged] = useState<Set<string>>(new Set());
+  const [replacing, setReplacing] = useState<{ item: Item; scope: "daily" | "weekly" } | null>(null);
   const [freeText, setFreeText] = useState("");
-  const [weeklyFields, setWeeklyFields] = useState({ well: "", unfinished: "", change: "", priorities: "" });
-  const setWeekly = (key: keyof typeof weeklyFields, value: string) => setWeeklyFields((current) => ({ ...current, [key]: value }));
-  const weeklyText = Object.entries(weeklyFields).filter(([, value]) => value.trim()).map(([key, value]) => `${key}: ${value}`).join("\n");
+  const [wellText, setWellText] = useState("");
+  const [changeText, setChangeText] = useState("");
+  const [prioritiesText, setPrioritiesText] = useState("");
+  const [selectedPriorities, setSelectedPriorities] = useState<Set<string>>(new Set());
 
   const visibleOpen = openItems.filter((item) => !acknowledged.has(item.id));
+  const visibleUnfinished = unfinishedThisWeek.filter((item) => !weeklyAcknowledged.has(item.id));
+
+  const weekStart = startOfWeek(new Date());
+  const weekRange = `${weekStart.toLocaleDateString(undefined, { month: "long", day: "numeric" })} – ${addDays(weekStart, 6).toLocaleDateString(undefined, { month: "long", day: "numeric" })}`;
 
   function acknowledge(id: string) {
     setAcknowledged((current) => new Set(current).add(id));
+  }
+
+  function weeklyAcknowledge(id: string) {
+    setWeeklyAcknowledged((current) => new Set(current).add(id));
+  }
+
+  function togglePriority(id: string) {
+    setSelectedPriorities((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   }
 
   function saveDaily() {
@@ -650,6 +672,25 @@ function ReflectionPanel({ doneToday, openItems, allItems, reflections, onOpen, 
     if (!summary.trim()) return;
     onSave("daily", summary);
     setFreeText("");
+  }
+
+  function saveWeekly() {
+    const priorityItems = openItems.filter((item) => selectedPriorities.has(item.id));
+    const lines = [
+      doneThisWeek.length ? `Went well: ${doneThisWeek.map((item) => item.text).join("; ")}.` : "",
+      wellText.trim(),
+      visibleUnfinished.length ? `Stayed unfinished: ${visibleUnfinished.map((item) => item.text).join("; ")}.` : "",
+      priorityItems.length ? `Priorities: ${priorityItems.map((item) => item.text).join("; ")}.` : "",
+      prioritiesText.trim(),
+      changeText.trim() ? `Change next week: ${changeText.trim()}` : "",
+    ];
+    const summary = lines.filter(Boolean).join("\n");
+    if (!summary.trim()) return;
+    onSave("weekly", summary);
+    setWellText("");
+    setChangeText("");
+    setPrioritiesText("");
+    setSelectedPriorities(new Set());
   }
 
   return <div className="stack">
@@ -666,9 +707,10 @@ function ReflectionPanel({ doneToday, openItems, allItems, reflections, onOpen, 
         {visibleOpen.length ? <div className="item-list" style={{ marginTop: 8 }}>{visibleOpen.map((item) => <div className="item-row-wrap" key={item.id}>
           <div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.category && <span className="tag">{item.category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}</div></div><button className="ghost small-button" onClick={() => onOpen(item)}>Edit</button></div>
           <div className="row-footer">
+            <button className="ghost small-button" onClick={() => onDone(item)}>Done</button>
             <button className="ghost small-button" onClick={() => acknowledge(item.id)}>Carry forward</button>
             <button className="ghost small-button" onClick={() => { onDrop(item.id); acknowledge(item.id); }}>Drop</button>
-            <button className="ghost small-button" onClick={() => setReplacing(item)}>Replace</button>
+            <button className="ghost small-button" onClick={() => setReplacing({ item, scope: "daily" })}>Replace</button>
           </div>
         </div>)}</div> : <p className="empty">Nothing open right now.</p>}
       </div>
@@ -679,9 +721,45 @@ function ReflectionPanel({ doneToday, openItems, allItems, reflections, onOpen, 
       </div>
       <div className="actions"><button className="primary" onClick={saveDaily}>Save daily reflection</button></div>
     </section>
-    <section className="card"><div className="section-label">End of week</div><h2 style={{ marginTop: 8 }}>Make the next week lighter.</h2><div className="review-grid" style={{ marginTop: 18 }}><ReviewCard title="What went well?" value={weeklyFields.well} setValue={(value) => setWeekly("well", value)} /><ReviewCard title="What stayed unfinished?" value={weeklyFields.unfinished} setValue={(value) => setWeekly("unfinished", value)} /><ReviewCard title="What should change next week?" value={weeklyFields.change} setValue={(value) => setWeekly("change", value)} /><ReviewCard title="Next week’s priorities" value={weeklyFields.priorities} setValue={(value) => setWeekly("priorities", value)} /></div><div className="actions"><button className="primary" onClick={() => { onSave("weekly", weeklyText); setWeeklyFields({ well: "", unfinished: "", change: "", priorities: "" }); }}>Save weekly review</button></div></section>
+
+    <section className="card">
+      <div className="card-header"><div><div className="section-label">End of week</div><h2>Make the next week lighter.</h2><p className="hint" style={{ marginTop: 4 }}>{weekRange}</p></div></div>
+
+      <div className="field full">
+        <label>What went well ({doneThisWeek.length})</label>
+        {doneThisWeek.length ? <div className="item-list" style={{ marginTop: 8 }}>{doneThisWeek.map((item) => <div className="item-row" key={item.id}><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta"><span className="tag accent">Done</span></div></div></div>)}</div> : <p className="empty">Nothing marked done yet this week.</p>}
+        <textarea style={{ marginTop: 10 }} value={wellText} onChange={(event) => setWellText(event.target.value)} placeholder="Anything else that went well?" />
+      </div>
+
+      <div className="field full" style={{ marginTop: 18 }}>
+        <label>What stayed unfinished ({visibleUnfinished.length})</label>
+        {visibleUnfinished.length ? <div className="item-list" style={{ marginTop: 8 }}>{visibleUnfinished.map((item) => <div className="item-row-wrap" key={item.id}>
+          <div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.category && <span className="tag">{item.category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}</div></div><button className="ghost small-button" onClick={() => onOpen(item)}>Edit</button></div>
+          <div className="row-footer">
+            <button className="ghost small-button" onClick={() => onDone(item)}>Done</button>
+            <button className="ghost small-button" onClick={() => weeklyAcknowledge(item.id)}>Carry forward</button>
+            <button className="ghost small-button" onClick={() => { onDrop(item.id); weeklyAcknowledge(item.id); }}>Drop</button>
+            <button className="ghost small-button" onClick={() => setReplacing({ item, scope: "weekly" })}>Replace</button>
+          </div>
+        </div>)}</div> : <p className="empty">Nothing stayed unfinished this week.</p>}
+      </div>
+
+      <div className="field full" style={{ marginTop: 18 }}>
+        <label>Next week's priorities</label>
+        {openItems.length > 0 && <div className="chips" style={{ marginTop: 8 }}>{openItems.map((item) => <button type="button" key={item.id} className={`chip ${selectedPriorities.has(item.id) ? "selected" : ""}`} onClick={() => togglePriority(item.id)}>{item.text}</button>)}</div>}
+        <textarea style={{ marginTop: 10 }} value={prioritiesText} onChange={(event) => setPrioritiesText(event.target.value)} placeholder="Anything else, or not yet captured?" />
+      </div>
+
+      <div className="field" style={{ marginTop: 18 }}>
+        <label htmlFor="weekly-change">What should change next week?</label>
+        <textarea id="weekly-change" value={changeText} onChange={(event) => setChangeText(event.target.value)} placeholder="What would make next week lighter?" />
+      </div>
+
+      <div className="actions"><button className="primary" onClick={saveWeekly}>Save weekly review</button></div>
+    </section>
+
     {reflections.length > 0 && <section className="card"><div className="section-label">Recent reflections</div><div className="item-list" style={{ marginTop: 14 }}>{reflections.slice(0, 5).map((item) => <div className="item-row" key={item.id}><div className="item-main"><div className="item-text" style={{ whiteSpace: "pre-line" }}>{item.text}</div><div className="item-meta"><span className="tag">{item.type}</span><span className="tag">{new Date(item.createdAt).toLocaleDateString()}</span></div></div></div>)}</div></section>}
-    {replacing && <ReplacePanel original={replacing} allItems={allItems} onChoose={(chosenId) => { onReplace(replacing.id, chosenId); acknowledge(replacing.id); setReplacing(null); }} onJustDrop={() => { onDrop(replacing.id); acknowledge(replacing.id); setReplacing(null); }} onClose={() => setReplacing(null)} />}
+    {replacing && <ReplacePanel original={replacing.item} allItems={allItems} onChoose={(chosenId) => { onReplace(replacing.item.id, chosenId); (replacing.scope === "daily" ? acknowledge : weeklyAcknowledge)(replacing.item.id); setReplacing(null); }} onJustDrop={() => { onDrop(replacing.item.id); (replacing.scope === "daily" ? acknowledge : weeklyAcknowledge)(replacing.item.id); setReplacing(null); }} onClose={() => setReplacing(null)} />}
   </div>;
 }
 
@@ -703,7 +781,5 @@ function ReplacePanel({ original, allItems, onChoose, onJustDrop, onClose }: { o
     {ranked.length ? <div className="item-list" style={{ marginTop: 12 }}>{ranked.map(({ item, longer }) => <div className="item-row" key={item.id}><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta"><span className="tag accent">{formatMinutes(item.estimateMinutes)}</span>{longer && <span className="tag">Takes longer</span>}</div></div><button className="ghost small-button" onClick={() => onChoose(item.id)}>Choose</button></div>)}</div> : <p className="empty">Nothing else has a time estimate yet to swap in. Add an estimate to another item first.</p>}
   </div></div>;
 }
-
-function ReviewCard({ title, value, setValue }: { title: string; value: string; setValue: (value: string) => void }) { return <div className="review-card"><h3>{title}</h3><textarea value={value} onChange={(event) => setValue(event.target.value)} placeholder="Add a note…" /></div>; }
 
 function SummaryModal({ items, onClose }: { items: Item[]; onClose: () => void }) { return <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="summary-title"><div className="card-header"><div><div className="section-label">Manual summary</div><h2 id="summary-title">What is still asking for attention?</h2></div><button className="ghost small-button" onClick={onClose}>Close</button></div><p className="empty">This is only a quick scan. Nothing is categorized or scheduled by this summary.</p><div className="item-list" style={{ marginTop: 14 }}>{items.map((item) => <div className="item-row" key={item.id}><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta"><span className="tag">Inbox</span></div></div></div>)}</div></div></div>; }

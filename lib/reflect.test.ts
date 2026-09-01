@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Item } from "./storage.ts";
-import { isDoneToday, rankReplacementCandidates } from "./reflect.ts";
+import { isDoneToday, isDoneThisWeek, rankReplacementCandidates } from "./reflect.ts";
 
 function item(over: Partial<Item> = {}): Item {
   const now = new Date().toISOString();
@@ -24,6 +24,33 @@ test("an item that is not done does not count as done today, however recently to
   const now = new Date("2026-08-31T14:00:00.000Z");
   const notDone = item({ done: false, updatedAt: "2026-08-31T13:59:00.000Z" });
   assert.equal(isDoneToday(notDone, now), false);
+});
+
+test("an item done earlier this same Mon-Sun week counts as done this week", () => {
+  // Tuesday, September 1, 2026 - the week is Aug 31 (Mon) through Sep 6 (Sun)
+  const now = new Date("2026-09-01T14:00:00.000Z");
+  const done = item({ done: true, updatedAt: "2026-08-31T09:00:00.000Z" }); // that Monday
+  assert.equal(isDoneThisWeek(done, now), true);
+});
+
+test("an item done last week does not count as done this week", () => {
+  const now = new Date("2026-09-01T14:00:00.000Z");
+  const done = item({ done: true, updatedAt: "2026-08-28T09:00:00.000Z" }); // the previous Friday
+  assert.equal(isDoneThisWeek(done, now), false);
+});
+
+test("an item done on Sunday, the last day of the week, still counts as done this week", () => {
+  const now = new Date("2026-09-01T14:00:00.000Z"); // still Tuesday of the same week
+  // Midday UTC, not near either edge of the day - stays Sunday in local time
+  // regardless of which timezone the test happens to run in.
+  const done = item({ done: true, updatedAt: "2026-09-06T12:00:00.000Z" }); // that week's Sunday
+  assert.equal(isDoneThisWeek(done, now), true);
+});
+
+test("an item that is not done does not count as done this week", () => {
+  const now = new Date("2026-09-01T14:00:00.000Z");
+  const notDone = item({ done: false, updatedAt: "2026-09-01T09:00:00.000Z" });
+  assert.equal(isDoneThisWeek(notDone, now), false);
 });
 
 test("replacement candidates exclude the item itself, done items, archived items, and items with no estimate", () => {
