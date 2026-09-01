@@ -56,6 +56,7 @@ test("exportData produces JSON that parseImport reads back exactly", () => {
     items: [{ id: "a", text: "call the bank", status: "Inbox" as const, createdAt: now, updatedAt: now }],
     reflections: [],
     targets: { Work: 10 },
+    projects: [],
   };
   assert.deepEqual(parseImport(exportData(data)), data);
 });
@@ -137,6 +138,84 @@ test("migration leaves a Work category and target untouched", () => {
   const back = loadData();
   assert.equal(back.items[0].category, "Work");
   assert.equal(back.targets.Work, 10);
+});
+
+// Projects used to be a free-text field on the item ("project: 'MIS
+// Rollout'") before they became real entities you create and attach tasks
+// to. Anything saved with that old text field must turn into a real project
+// on the way in, not silently lose the grouping.
+test("loadData turns a legacy free-text project into a real project entity", () => {
+  const now = new Date().toISOString();
+  store.set("plan-with-me:v1", JSON.stringify({
+    deviceKey: "device-10",
+    items: [{ id: "a", text: "draft the SOW", status: "Planned", bucket: "Today", project: "MIS Rollout", createdAt: now, updatedAt: now }],
+    reflections: [],
+    targets: {},
+  }));
+  const back = loadData();
+  assert.equal(back.projects.length, 1);
+  assert.equal(back.projects[0].name, "MIS Rollout");
+  assert.equal(back.items[0].projectId, back.projects[0].id);
+  assert.equal("project" in back.items[0], false, "the old text field should not linger on the migrated item");
+});
+
+test("two items with the same legacy project name are grouped into one project, not two", () => {
+  const now = new Date().toISOString();
+  store.set("plan-with-me:v1", JSON.stringify({
+    deviceKey: "device-11",
+    items: [
+      { id: "a", text: "draft the SOW", status: "Planned", bucket: "Today", project: "MIS Rollout", createdAt: now, updatedAt: now },
+      { id: "b", text: "book the kickoff call", status: "Planned", bucket: "Today", project: "MIS Rollout", createdAt: now, updatedAt: now },
+    ],
+    reflections: [],
+    targets: {},
+  }));
+  const back = loadData();
+  assert.equal(back.projects.length, 1);
+  assert.equal(back.items[0].projectId, back.items[1].projectId);
+});
+
+test("items with different legacy project names get separate projects", () => {
+  const now = new Date().toISOString();
+  store.set("plan-with-me:v1", JSON.stringify({
+    deviceKey: "device-12",
+    items: [
+      { id: "a", text: "draft the SOW", status: "Planned", project: "MIS Rollout", createdAt: now, updatedAt: now },
+      { id: "b", text: "book flights", status: "Planned", project: "Trip planning", createdAt: now, updatedAt: now },
+    ],
+    reflections: [],
+    targets: {},
+  }));
+  const back = loadData();
+  assert.equal(back.projects.length, 2);
+  assert.notEqual(back.items[0].projectId, back.items[1].projectId);
+});
+
+test("an item with no legacy project field is left without a projectId", () => {
+  const now = new Date().toISOString();
+  store.set("plan-with-me:v1", JSON.stringify({
+    deviceKey: "device-13",
+    items: [{ id: "a", text: "no project here", status: "Inbox", createdAt: now, updatedAt: now }],
+    reflections: [],
+    targets: {},
+  }));
+  const back = loadData();
+  assert.equal(back.items[0].projectId, undefined);
+  assert.equal(back.projects.length, 0);
+});
+
+test("an item that already has a projectId is not migrated again", () => {
+  const now = new Date().toISOString();
+  store.set("plan-with-me:v1", JSON.stringify({
+    deviceKey: "device-14",
+    items: [{ id: "a", text: "already grouped", status: "Planned", project: "Should be ignored", projectId: "existing-project", createdAt: now, updatedAt: now }],
+    reflections: [],
+    targets: {},
+    projects: [{ id: "existing-project", name: "Real project", done: false, createdAt: now, updatedAt: now }],
+  }));
+  const back = loadData();
+  assert.equal(back.items[0].projectId, "existing-project");
+  assert.equal(back.projects.length, 1);
 });
 
 test("migration leaves a Planned item's status untouched", () => {

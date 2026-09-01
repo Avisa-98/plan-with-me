@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { StoredData, Item } from "./storage.ts";
+import type { StoredData, Item, Project } from "./storage.ts";
 import { exportMarkdown } from "./exportMarkdown.ts";
 
 function item(over: Partial<Item> = {}): Item {
@@ -8,8 +8,13 @@ function item(over: Partial<Item> = {}): Item {
   return { id: Math.random().toString(36).slice(2), text: "t", status: "Inbox", createdAt: now, updatedAt: now, ...over };
 }
 
-function data(items: Item[] = [], reflections: StoredData["reflections"] = []): StoredData {
-  return { deviceKey: "d", items, reflections, targets: {} };
+function project(over: Partial<Project> = {}): Project {
+  const now = new Date().toISOString();
+  return { id: "p1", name: "Project", done: false, createdAt: now, updatedAt: now, ...over };
+}
+
+function data(items: Item[] = [], reflections: StoredData["reflections"] = [], projects: Project[] = []): StoredData {
+  return { deviceKey: "d", items, reflections, targets: {}, projects };
 }
 
 test("an idea appears as a plain bullet under Idea Log", () => {
@@ -32,6 +37,16 @@ test("category, estimate, and due date are annotated inline when present", () =>
     item({ text: "zoom w/ client", status: "Planned", bucket: "Today", category: "Work", estimateMinutes: 90, dueDate: "2026-09-05" }),
   ]));
   assert.match(md, /- \[ \] zoom w\/ client \(Work · 1h 30m · due 2026-09-05\)/);
+});
+
+test("a subtask's line shows its project's category, not its own stale field", () => {
+  const proj = project({ id: "p1", name: "MIS Rollout", category: "Health" });
+  const md = exportMarkdown(data(
+    [item({ text: "draft the SOW", status: "Planned", bucket: "Today", projectId: "p1", category: "Work", estimateMinutes: 60 })],
+    [],
+    [proj],
+  ));
+  assert.match(md, /- \[ \] draft the SOW \(Health · 1h\)/);
 });
 
 test("a task with no category, estimate, or due date shows with no parentheses at all", () => {

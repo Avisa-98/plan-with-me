@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bucket, Category, Item, ItemType, Reflection, StoredData, Targets, emptyData, exportData, loadData, makeId, parseImport, saveData } from "../lib/storage";
+import { Bucket, Category, Item, ItemType, Project, Reflection, StoredData, Targets, emptyData, exportData, loadData, makeId, parseImport, saveData } from "../lib/storage";
 import { exportMarkdown } from "../lib/exportMarkdown";
 import { isArchived, isIdea, isLater, isUnresolved, isWeekItem, sortDoneLast } from "../lib/views";
 import { joinSelected, segmentText } from "../lib/split";
 import { isDoneToday, isDoneThisWeek, rankReplacementCandidates } from "../lib/reflect";
 import { addDays, itemsOnDate, startOfMonth, startOfWeek, toDateKey, unscheduledItems } from "../lib/schedule";
+import { effectiveCategory, sortProjectsDoneLast, subtaskTotalMinutes, subtasksOf } from "../lib/projects";
 
 const categories: Category[] = ["Work", "Family", "Friends", "Health", "Personal"];
 const buckets: Bucket[] = ["Today", "This Week", "Later"];
@@ -51,6 +52,7 @@ export default function Home() {
   const [captureExpanded, setCaptureExpanded] = useState(false);
   const [selected, setSelected] = useState<Item | null>(null);
   const [splitting, setSplitting] = useState<Item | null>(null);
+  const [projectPanel, setProjectPanel] = useState<Project | null>(null);
   // What's waiting on the duplicate-warning popup: the text someone tried to
   // save, the existing item it matches, and (for a split item only) which
   // note it should stay linked back to if they choose to keep it anyway.
@@ -98,7 +100,7 @@ export default function Home() {
   const weekMinutes = weekItems.reduce((sum, item) => sum + (item.estimateMinutes ?? 0), 0);
   const categoryTotals = categories.map((category) => ({
     category,
-    minutes: weekItems.filter((item) => item.category === category).reduce((sum, item) => sum + (item.estimateMinutes ?? 0), 0),
+    minutes: weekItems.filter((item) => effectiveCategory(item, data.projects) === category).reduce((sum, item) => sum + (item.estimateMinutes ?? 0), 0),
   }));
   const largestCategory = Math.max(...categoryTotals.map((item) => item.minutes), 60);
   const categoryConflicts = categoryTotals.filter(({ category, minutes }) => targets[category] && minutes > (targets[category] ?? 0));
@@ -202,6 +204,48 @@ export default function Home() {
     updateData((current) => ({ ...current, items: current.items.filter((item) => item.id !== id) }));
     setSelected(null);
     showToast("Item deleted.");
+  }
+
+  function createProject(project: Project) {
+    updateData((current) => ({ ...current, projects: [project, ...current.projects] }));
+    showToast(`Project "${project.name}" created.`);
+  }
+
+  function saveProject(updated: Project) {
+    updateData((current) => ({ ...current, projects: current.projects.map((project) => project.id === updated.id ? { ...updated, updatedAt: new Date().toISOString() } : project) }));
+    showToast("Project saved.");
+  }
+
+  function toggleProjectDone(id: string, done: boolean) {
+    updateData((current) => ({ ...current, projects: current.projects.map((project) => project.id === id ? { ...project, done, updatedAt: new Date().toISOString() } : project) }));
+    showToast(done ? "Project marked done." : "Project reopened.");
+  }
+
+  // Deleting a project never deletes its subtasks - they're kept, just
+  // detached, so closing out or undoing a project by mistake never costs you
+  // real task data.
+  function deleteProject(id: string) {
+    updateData((current) => ({
+      ...current,
+      projects: current.projects.filter((project) => project.id !== id),
+      items: current.items.map((item) => item.projectId === id ? { ...item, projectId: undefined } : item),
+    }));
+    setProjectPanel(null);
+    showToast("Project deleted. Its tasks were kept, just detached.");
+  }
+
+  function addSubtask(projectId: string, text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const now = new Date().toISOString();
+    const item: Item = { id: makeId(), text: trimmed, status: "Inbox", projectId, createdAt: now, updatedAt: now };
+    updateData((current) => ({ ...current, items: [item, ...current.items] }));
+    // Straight into Organize, so setting its category/estimate/bucket doesn't
+    // require leaving the project, finding it in Inbox, and reopening it.
+    // The Project panel stays open underneath - closing Organize returns to
+    // the project with the subtask already updated.
+    setSelected(item);
+    showToast("Subtask added.");
   }
 
   // Pulls one phrase out of a braindump as its own Inbox item. The
@@ -319,12 +363,13 @@ export default function Home() {
           <button type="button" className="capture-compact" onClick={() => setCaptureExpanded(true)}>Add a thought</button>
         )}
 
-        {tab === "home" && <Overview unresolved={unresolved} weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} onOpen={(item) => setSelected(item)} onTab={setTab} />}
-        {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} ideaItems={ideaItems} archivedItems={archivedItems} onOpen={(item) => setSelected(item)} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
-        {tab === "week" && <PlanTab weekItems={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} onDone={toggleDone} committedItems={committedItems} />}
-        {tab === "reflections" && <ReflectionPanel doneToday={doneToday} doneThisWeek={doneThisWeek} unfinishedThisWeek={unfinishedThisWeek} openItems={openItems} allItems={data.items} reflections={data.reflections} onOpen={(item) => setSelected(item)} onDrop={deleteItem} onReplace={replaceItem} onDone={toggleDone} onSave={saveReflection} />}
+        {tab === "home" && <Overview unresolved={unresolved} weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} projects={data.projects} onOpen={(item) => setSelected(item)} onTab={setTab} />}
+        {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} ideaItems={ideaItems} archivedItems={archivedItems} projects={data.projects} onSaveItem={saveItem} onDeleteItem={deleteItem} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onOpenProject={(project) => setProjectPanel(project)} onCreateProject={createProject} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
+        {tab === "week" && <PlanTab weekItems={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} projects={data.projects} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} onDone={toggleDone} committedItems={committedItems} />}
+        {tab === "reflections" && <ReflectionPanel doneToday={doneToday} doneThisWeek={doneThisWeek} unfinishedThisWeek={unfinishedThisWeek} openItems={openItems} allItems={data.items} projects={data.projects} reflections={data.reflections} onOpen={(item) => setSelected(item)} onDrop={deleteItem} onReplace={replaceItem} onDone={toggleDone} onSave={saveReflection} />}
 
-        {selected && <OrganizePanel item={selected} onSave={saveItem} onDelete={() => deleteItem(selected.id)} onClose={() => setSelected(null)} onSplit={() => { setSplitting(selected); setSelected(null); }} />}
+        {selected && <OrganizePanel item={selected} projects={data.projects} onSave={saveItem} onDelete={() => deleteItem(selected.id)} onClose={() => setSelected(null)} onSplit={() => { setSplitting(selected); setSelected(null); }} onCreateProject={createProject} />}
+        {projectPanel && <ProjectPanel project={data.projects.find((project) => project.id === projectPanel.id) ?? projectPanel} allProjects={data.projects} subtasks={subtasksOf(projectPanel.id, data.items)} onAddSubtask={(text) => addSubtask(projectPanel.id, text)} onSaveSubtask={saveItem} onDeleteSubtask={deleteItem} onSplitSubtask={(item) => { setSplitting(item); setProjectPanel(null); }} onDoneSubtask={toggleDone} onCreateProject={createProject} onSave={saveProject} onToggleDone={(done) => toggleProjectDone(projectPanel.id, done)} onDelete={() => deleteProject(projectPanel.id)} onClose={() => setProjectPanel(null)} />}
         {markingDone && <DoneModal item={markingDone} onConfirm={(minutes) => confirmDone(markingDone.id, minutes)} onSkip={() => confirmDone(markingDone.id, undefined)} />}
         {splitting && <SplitPanel item={splitting} children={data.items.filter((item) => item.splitFrom === splitting.id)} onAddChild={(text, type) => addSplitItem(splitting.id, text, type)} onClose={() => setSplitting(null)} />}
         {duplicate && <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="duplicate-title"><div className="section-label">Possible duplicate</div><h2 id="duplicate-title">You already have a note like this.</h2><p className="empty">Keep it anyway, or cancel and continue with the existing note.</p><div className="actions"><button className="ghost" onClick={() => setDuplicate(null)}>Cancel</button><button className="primary" onClick={keepDuplicate}>Keep both</button></div></div></div>}
@@ -335,12 +380,29 @@ export default function Home() {
   );
 }
 
-function Overview({ unresolved, weekItems, weekMinutes, categoryTotals, largestCategory, onOpen, onTab }: { unresolved: Item[]; weekItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; onOpen: (item: Item) => void; onTab: (tab: Tab) => void }) {
-  return <div className="layout"><div className="stack"><section className="card stat-card"><div className="section-label">This week in view</div>{weekItems.length > 0 ? <><div className="big-number">{formatMinutes(weekMinutes)}</div><p className="stat-sub">estimated across {weekItems.length} planned {weekItems.length === 1 ? "item" : "items"}. Add estimates during review to make this useful.</p><div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar"><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></> : <p className="stat-sub" style={{ marginTop: 8 }}>Add a thought, then organize it into this week to see your time here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Inbox</div><h2>{unresolved.length ? `${unresolved.length} thought${unresolved.length === 1 ? "" : "s"} waiting` : "Your inbox is clear"}</h2></div><button className="ghost" onClick={() => onTab("inbox")}>Open inbox</button></div>{unresolved.length ? <div className="item-list">{unresolved.slice(0, 4).map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Organize" />)}</div> : <p className="empty">Add the next thought before it pulls you away.</p>}</section></div><div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>What is taking space?</h2></div></div><p className="empty">{weekItems.length ? "Review the draft to spot conflicts and make the trade-off yourself." : "Organized items will appear here as a draft week."}</p><button className="ghost" style={{ marginTop: 15, width: "100%" }} onClick={() => onTab("week")}>Open This week</button></section></div></div>;
+function Overview({ unresolved, weekItems, weekMinutes, categoryTotals, largestCategory, projects, onOpen, onTab }: { unresolved: Item[]; weekItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; projects: Project[]; onOpen: (item: Item) => void; onTab: (tab: Tab) => void }) {
+  return <div className="layout"><div className="stack"><section className="card stat-card"><div className="section-label">This week in view</div>{weekItems.length > 0 ? <><div className="big-number">{formatMinutes(weekMinutes)}</div><p className="stat-sub">estimated across {weekItems.length} planned {weekItems.length === 1 ? "item" : "items"}. Add estimates during review to make this useful.</p><div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar"><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></> : <p className="stat-sub" style={{ marginTop: 8 }}>Add a thought, then organize it into this week to see your time here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Inbox</div><h2>{unresolved.length ? `${unresolved.length} thought${unresolved.length === 1 ? "" : "s"} waiting` : "Your inbox is clear"}</h2></div><button className="ghost" onClick={() => onTab("inbox")}>Open inbox</button></div>{unresolved.length ? <div className="item-list">{unresolved.slice(0, 4).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Organize" />)}</div> : <p className="empty">Add the next thought before it pulls you away.</p>}</section></div><div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>What is taking space?</h2></div></div><p className="empty">{weekItems.length ? "Review the draft to spot conflicts and make the trade-off yourself." : "Organized items will appear here as a draft week."}</p><button className="ghost" style={{ marginTop: 15, width: "100%" }} onClick={() => onTab("week")}>Open This week</button></section></div></div>;
 }
 
-function ItemRow({ item, onOpen, action, footer, onDone }: { item: Item; onOpen: (item: Item) => void; action: string; footer?: React.ReactNode; onDone?: (item: Item) => void }) {
-  return <div className="item-row-wrap"><div className={`item-row${item.done ? " item-row-done" : ""}`}><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.splitFrom && <span className="tag subtle">↗ from a braindump</span>}{item.category && <span className="tag">{item.category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}{item.done && <span className="tag accent">Done</span>}</div></div><div style={{ display: "flex", gap: 6 }}>{onDone && <button className={`ghost small-button${item.done ? " done" : ""}`} onClick={() => onDone(item)}>{item.done ? "Undo" : "Mark done"}</button>}<button className="ghost small-button" onClick={() => onOpen(item)}>{action}</button></div></div>{footer}</div>;
+function ItemRow({ item, projects, onOpen, action, footer, onDone }: { item: Item; projects: Project[]; onOpen: (item: Item) => void; action: string; footer?: React.ReactNode; onDone?: (item: Item) => void }) {
+  const category = effectiveCategory(item, projects);
+  return <div className="item-row-wrap"><div className={`item-row${item.done ? " item-row-done" : ""}`}><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.splitFrom && <span className="tag subtle">↗ from a braindump</span>}{category && <span className="tag">{category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}{item.done && <span className="tag accent">Done</span>}</div></div><div style={{ display: "flex", gap: 6 }}>{onDone && <button className={`ghost small-button${item.done ? " done" : ""}`} onClick={() => onDone(item)}>{item.done ? "Undo" : "Mark done"}</button>}<button className="ghost small-button" onClick={() => onOpen(item)}>{action}</button></div></div>{footer}</div>;
+}
+
+// A list of items where "Organize"/"Edit"/whatever expands the same form
+// used everywhere, right in place - instead of covering the list you were
+// just looking at with a separate screen. Each row tracks its own expanded
+// state, and only one row in a given list opens at a time.
+function OrganizableList({ items, action, projects, onDone, footer, onSaveItem, onDeleteItem, onSplitItem, onCreateProject }: { items: Item[]; action: string; projects: Project[]; onDone?: (item: Item) => void; footer?: (item: Item) => React.ReactNode; onSaveItem: (item: Item) => void; onDeleteItem: (id: string) => void; onSplitItem: (item: Item) => void; onCreateProject: (project: Project) => void }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  // The row itself turns into the form when expanded - not a row that stays
+  // put plus a second box underneath it.
+  return <div className="item-list">{items.map((item) => {
+    if (expandedId === item.id) {
+      return <OrganizePanel key={item.id} item={item} projects={projects} inline onSave={(updated) => { onSaveItem(updated); setExpandedId(null); }} onDelete={() => { onDeleteItem(item.id); setExpandedId(null); }} onSplit={() => onSplitItem(item)} onClose={() => setExpandedId(null)} onCreateProject={onCreateProject} />;
+    }
+    return <ItemRow key={item.id} item={item} projects={projects} onOpen={() => setExpandedId(item.id)} action={action} onDone={onDone} footer={footer ? footer(item) : undefined} />;
+  })}</div>;
 }
 
 function DoneModal({ item, onConfirm, onSkip }: { item: Item; onConfirm: (minutes: number | undefined) => void; onSkip: () => void }) {
@@ -361,17 +423,38 @@ function DoneModal({ item, onConfirm, onSkip }: { item: Item; onConfirm: (minute
   </div></div>;
 }
 
-function Inbox({ items, allItems, ideaItems, archivedItems, onOpen, onSplit, onArchive, onSummary }: { items: Item[]; allItems: Item[]; ideaItems: Item[]; archivedItems: Item[]; onOpen: (item: Item) => void; onSplit: (item: Item) => void; onArchive: (id: string) => void; onSummary: () => void }) {
-  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Inbox</div><h2>Decide when you have space.</h2></div><button className="ghost small-button" onClick={onSummary} disabled={!items.length}>Summarize unresolved</button></div>{items.length ? <div className="item-list">{items.map((item) => {
+function Inbox({ items, allItems, ideaItems, archivedItems, projects, onSaveItem, onDeleteItem, onSplit, onArchive, onOpenProject, onCreateProject, onSummary }: { items: Item[]; allItems: Item[]; ideaItems: Item[]; archivedItems: Item[]; projects: Project[]; onSaveItem: (item: Item) => void; onDeleteItem: (id: string) => void; onSplit: (item: Item) => void; onArchive: (id: string) => void; onOpenProject: (project: Project) => void; onCreateProject: (project: Project) => void; onSummary: () => void }) {
+  const [newProjectName, setNewProjectName] = useState("");
+
+  function createProject() {
+    const name = newProjectName.trim();
+    if (!name) return;
+    const now = new Date().toISOString();
+    onCreateProject({ id: makeId(), name, done: false, createdAt: now, updatedAt: now });
+    setNewProjectName("");
+  }
+
+  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Inbox</div><h2>Decide when you have space.</h2></div><button className="ghost small-button" onClick={onSummary} disabled={!items.length}>Summarize unresolved</button></div>{items.length ? <OrganizableList items={items} action="Organize" projects={projects} onSaveItem={onSaveItem} onDeleteItem={onDeleteItem} onSplitItem={onSplit} onCreateProject={onCreateProject} footer={(item) => {
     const childCount = allItems.filter((candidate) => candidate.splitFrom === item.id).length;
-    return <ItemRow key={item.id} item={item} onOpen={onOpen} action="Organize" footer={
-      <div className="row-footer">
-        {childCount > 0 && <span className="hint">⤷ {childCount} item{childCount === 1 ? "" : "s"} split out</span>}
-        <button className="ghost small-button" onClick={() => onSplit(item)}>Split</button>
-        {childCount > 0 && <button className="ghost small-button" onClick={() => onArchive(item.id)}>Nothing left in this note</button>}
+    return childCount > 0 ? <div className="row-footer">
+      <span className="hint">⤷ {childCount} item{childCount === 1 ? "" : "s"} split out</span>
+      <button className="ghost small-button" onClick={() => onArchive(item.id)}>Nothing left in this note</button>
+    </div> : undefined;
+  }} /> : <p className="empty">Nothing waiting here. Add a thought whenever one arrives.</p>}</section>
+
+    <section className="card">
+      <div className="card-header"><div><div className="section-label">Projects</div><h2>{projects.length} project{projects.length === 1 ? "" : "s"}</h2></div></div>
+      {projects.length ? <div className="item-list">{sortProjectsDoneLast(projects).map((project) => {
+        const subtaskCount = allItems.filter((item) => item.projectId === project.id).length;
+        return <div className="item-row" key={project.id}><div className="item-main"><div className="item-text">{project.name}</div><div className="item-meta"><span className="tag">{subtaskCount} subtask{subtaskCount === 1 ? "" : "s"}</span>{project.done && <span className="tag accent">Done</span>}</div></div><button className="ghost small-button" onClick={() => onOpenProject(project)}>Open</button></div>;
+      })}</div> : <p className="empty">No projects yet. Create one below, then attach tasks to it from Organize.</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder="New project name…" style={{ flex: 1 }} onKeyDown={(event) => { if (event.key === "Enter") createProject(); }} />
+        <button className="ghost small-button" onClick={createProject}>+ New project</button>
       </div>
-    } />;
-  })}</div> : <p className="empty">Nothing waiting here. Add a thought whenever one arrives.</p>}</section>{ideaItems.length > 0 && <section className="card"><details><summary className="section-label">Idea log · {ideaItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Fleeting ideas, not tasks - no schedule, no estimate. Tap Edit to change the wording or drop one back to a task.</p><div className="item-list" style={{ marginTop: 12 }}>{ideaItems.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" />)}</div></details></section>}{archivedItems.length > 0 && <section className="card"><details><summary className="section-label">Archive · {archivedItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Original braindumps you have fully split into separate items. Kept out of the way, not deleted.</p><div className="item-list" style={{ marginTop: 12 }}>{archivedItems.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="View" />)}</div></details></section>}</div>;
+    </section>
+
+    {ideaItems.length > 0 && <section className="card"><details><summary className="section-label">Idea log · {ideaItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Fleeting ideas, not tasks - no schedule, no estimate. Tap Edit to change the wording or drop one back to a task.</p><div style={{ marginTop: 12 }}><OrganizableList items={ideaItems} action="Edit" projects={projects} onSaveItem={onSaveItem} onDeleteItem={onDeleteItem} onSplitItem={onSplit} onCreateProject={onCreateProject} /></div></details></section>}{archivedItems.length > 0 && <section className="card"><details><summary className="section-label">Archive · {archivedItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Original braindumps you have fully split into separate items. Kept out of the way, not deleted.</p><div style={{ marginTop: 12 }}><OrganizableList items={archivedItems} action="View" projects={projects} onSaveItem={onSaveItem} onDeleteItem={onDeleteItem} onSplitItem={onSplit} onCreateProject={onCreateProject} /></div></details></section>}</div>;
 }
 
 function SplitPanel({ item, children, onAddChild, onClose }: { item: Item; children: Item[]; onAddChild: (text: string, type: ItemType) => void; onClose: () => void }) {
@@ -461,7 +544,9 @@ function SplitPanel({ item, children, onAddChild, onClose }: { item: Item; child
   </div></div>;
 }
 
-function OrganizePanel({ item, onSave, onDelete, onClose, onSplit }: { item: Item; onSave: (item: Item) => void; onDelete: () => void; onClose: () => void; onSplit: () => void }) {
+function OrganizePanel({ item, projects, onSave, onDelete, onClose, onSplit, onCreateProject, inline }: { item: Item; projects: Project[]; onSave: (item: Item) => void; onDelete: () => void; onClose: () => void; onSplit: () => void; onCreateProject: (project: Project) => void; inline?: boolean }) {
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
   const [draft, setDraft] = useState<Item>(item);
   const [hours, setHours] = useState(item.estimateMinutes ? String(Math.floor(item.estimateMinutes / 60)) : "");
   const [minutes, setMinutes] = useState(item.estimateMinutes ? String(item.estimateMinutes % 60) : "");
@@ -471,6 +556,7 @@ function OrganizePanel({ item, onSave, onDelete, onClose, onSplit }: { item: Ite
   // re-editing something that was already logged as one - the original item
   // decides which, not whatever the Type toggle is set to right now.
   const alreadyLogged = item.type === "idea";
+  const attachedProject = projects.find((project) => project.id === draft.projectId);
 
   function save() {
     if (isIdea) {
@@ -478,11 +564,25 @@ function OrganizePanel({ item, onSave, onDelete, onClose, onSplit }: { item: Ite
       return;
     }
     const estimate = (Number(hours) || 0) * 60 + (Number(minutes) || 0);
-    onSave({ ...draft, type: "task", status: draft.bucket ? "Planned" : "Inbox", estimateMinutes: estimate || undefined });
+    // A subtask never carries its own category - clearing it here (rather
+    // than just leaving it ignored) means detaching from the project later
+    // starts from a clean slate instead of resurrecting a stale value.
+    onSave({ ...draft, type: "task", status: draft.bucket ? "Planned" : "Inbox", estimateMinutes: estimate || undefined, category: draft.projectId ? undefined : draft.category });
   }
 
-  return <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="organize-title">
-    <div className="card-header"><div><div className="section-label">Inbox note</div><h2 id="organize-title">Give it a place.</h2></div><div style={{ display: "flex", gap: 6 }}><button className="ghost small-button" onClick={onSplit}>Split</button><button className="ghost small-button" onClick={onClose}>Close</button></div></div>
+  function createProject() {
+    const name = newProjectName.trim();
+    if (!name) return;
+    const now = new Date().toISOString();
+    const project: Project = { id: makeId(), name, done: false, createdAt: now, updatedAt: now };
+    onCreateProject(project);
+    set({ projectId: project.id });
+    setNewProjectName("");
+    setCreatingProject(false);
+  }
+
+  const content = <>
+    <div className="card-header"><div><div className="section-label">Inbox note</div><h2 id="organize-title">Give it a place.</h2></div><div style={{ display: "flex", gap: 6 }}><button className="ghost small-button" onClick={onSplit}>Split</button><button className="ghost small-button" onClick={onClose}>{inline ? "Collapse" : "Close"}</button></div></div>
     <div className="field full"><label htmlFor="item-text">Note</label><textarea id="item-text" value={draft.text} onChange={(event) => set({ text: event.target.value })} /></div>
     <div className="field" style={{ marginTop: 14 }}><label>Type</label><div className="chips">
       <button type="button" className={`chip ${!isIdea ? "selected" : ""}`} onClick={() => set({ type: "task" })}>Task</button>
@@ -492,14 +592,31 @@ function OrganizePanel({ item, onSave, onDelete, onClose, onSplit }: { item: Ite
       <p className="empty">Ideas skip the schedule entirely - no category, estimate, or bucket. Just the note, logged for later.</p>
     ) : (
       <>
-        <div className="field" style={{ marginTop: 14 }}><label>Category</label><div className="chips">{categories.map((category) => <button type="button" className={`chip ${draft.category === category ? "selected" : ""}`} key={category} onClick={() => set({ category })}>{category}</button>)}</div></div>
+        {attachedProject ? (
+          <div className="field" style={{ marginTop: 14 }}><label>Category</label><p className="hint">{attachedProject.category ? `${attachedProject.category} - inherited from "${attachedProject.name}"` : `"${attachedProject.name}" has no category set yet - set one from the Projects section.`}</p></div>
+        ) : (
+          <div className="field" style={{ marginTop: 14 }}><label>Category</label><div className="chips">{categories.map((category) => <button type="button" className={`chip ${draft.category === category ? "selected" : ""}`} key={category} onClick={() => set({ category })}>{category}</button>)}</div></div>
+        )}
         <div className="field" style={{ marginTop: 14 }}><label>When</label><div className="chips">{buckets.map((bucket) => <button type="button" className={`chip ${draft.bucket === bucket ? "selected" : ""}`} key={bucket} onClick={() => set({ bucket })}>{bucket}</button>)}</div></div>
         <div className="form-grid" style={{ marginTop: 14 }}>
           <div className="field"><label htmlFor="hours">Estimated hours</label><input id="hours" inputMode="numeric" value={hours} onChange={(event) => setHours(event.target.value)} placeholder="0" /></div>
           <div className="field"><label htmlFor="minutes">Estimated minutes</label><input id="minutes" inputMode="numeric" value={minutes} onChange={(event) => setMinutes(event.target.value)} placeholder="0" /></div>
           <div className="field"><label htmlFor="effort">Effort</label><select id="effort" value={draft.effort ?? ""} onChange={(event) => set({ effort: (event.target.value || undefined) as Item["effort"] })}><option value="">Not set</option><option>Low</option><option>Medium</option><option>High</option></select></div>
           <div className="field"><label htmlFor="due">Due date</label><input id="due" type="date" value={draft.dueDate ?? ""} onChange={(event) => set({ dueDate: event.target.value || undefined })} /></div>
-          <div className="field full"><label htmlFor="project">Project name (optional)</label><input id="project" value={draft.project ?? ""} onChange={(event) => set({ project: event.target.value || undefined })} placeholder="e.g. MIS rollout" /></div>
+          <div className="field full">
+            <label htmlFor="project-select">Project (optional)</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <select id="project-select" style={{ flex: 1 }} value={draft.projectId ?? ""} onChange={(event) => set({ projectId: event.target.value || undefined })}>
+                <option value="">No project</option>
+                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}{project.done ? " (done)" : ""}</option>)}
+              </select>
+              <button type="button" className="ghost small-button" onClick={() => setCreatingProject((current) => !current)}>+ New</button>
+            </div>
+            {creatingProject && <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder="Project name" style={{ flex: 1 }} onKeyDown={(event) => { if (event.key === "Enter") createProject(); }} />
+              <button type="button" className="primary small-button" onClick={createProject}>Create</button>
+            </div>}
+          </div>
         </div>
         {!draft.bucket && <div className="notice">Leave it here if you are not ready to commit it. Blank fields are allowed.</div>}
       </>
@@ -509,23 +626,88 @@ function OrganizePanel({ item, onSave, onDelete, onClose, onSplit }: { item: Ite
       <button className="ghost" onClick={onClose}>Cancel</button>
       <button className="primary" onClick={save}>{isIdea ? (alreadyLogged ? "Save" : "Add to idea log") : (draft.bucket ? "Commit to plan" : "Save in Inbox")}</button>
     </div>
+  </>;
+
+  // Reused two ways: the normal full-screen modal everywhere else, or - from
+  // inside a project's subtask list - expanded right in place, so organizing
+  // a subtask doesn't cover the project you came from and force you to close
+  // it just to see it again.
+  if (inline) {
+    return <div className="card" style={{ marginTop: 8, marginBottom: 8, boxShadow: "none", background: "rgba(244, 240, 232, .55)" }}>{content}</div>;
+  }
+  return <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="organize-title">{content}</div></div>;
+}
+
+function ProjectPanel({ project, allProjects, subtasks, onAddSubtask, onSaveSubtask, onDeleteSubtask, onSplitSubtask, onDoneSubtask, onCreateProject, onSave, onToggleDone, onDelete, onClose }: { project: Project; allProjects: Project[]; subtasks: Item[]; onAddSubtask: (text: string) => void; onSaveSubtask: (item: Item) => void; onDeleteSubtask: (id: string) => void; onSplitSubtask: (item: Item) => void; onDoneSubtask: (item: Item) => void; onCreateProject: (project: Project) => void; onSave: (project: Project) => void; onToggleDone: (done: boolean) => void; onDelete: () => void; onClose: () => void }) {
+  const [name, setName] = useState(project.name);
+  const [category, setCategory] = useState<Category | undefined>(project.category);
+  const [startDate, setStartDate] = useState(project.startDate ?? "");
+  const [endDate, setEndDate] = useState(project.endDate ?? "");
+  const [subtaskText, setSubtaskText] = useState("");
+  // Every subtask's category comes from this project, so the row's own tag
+  // reads correctly here without threading anything extra through -
+  // subtasksOf/ItemRow already resolve it the same way everywhere else.
+  const sortedSubtasks = sortDoneLast(subtasks);
+  const total = subtaskTotalMinutes(project.id, subtasks);
+
+  function save() {
+    onSave({ ...project, name: name.trim() || project.name, category, startDate: startDate || undefined, endDate: endDate || undefined });
+  }
+
+  function addSubtask() {
+    if (!subtaskText.trim()) return;
+    onAddSubtask(subtaskText);
+    setSubtaskText("");
+  }
+
+  return <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="project-title">
+    <div className="card-header"><div><div className="section-label">Project{project.done ? " · done" : ""}</div><h2 id="project-title">{project.name}</h2></div><button className="ghost small-button" onClick={onClose}>Close</button></div>
+
+    <div className="field full"><label htmlFor="project-name">Name</label><input id="project-name" value={name} onChange={(event) => setName(event.target.value)} /></div>
+
+    <div className="field" style={{ marginTop: 14 }}>
+      <label>Category</label>
+      <div className="chips">{categories.map((option) => <button type="button" key={option} className={`chip ${category === option ? "selected" : ""}`} onClick={() => setCategory(option)}>{option}</button>)}</div>
+      <p className="hint" style={{ marginTop: 6 }}>Every subtask uses this category - they don't get their own.</p>
+    </div>
+
+    <div className="form-grid" style={{ marginTop: 14 }}>
+      <div className="field"><label htmlFor="project-start">Start date</label><input id="project-start" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></div>
+      <div className="field"><label htmlFor="project-end">End date</label><input id="project-end" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></div>
+    </div>
+    <p className="hint" style={{ marginTop: 8 }}>Subtasks add up to {formatMinutes(total)}.</p>
+
+    <div className="field full" style={{ marginTop: 18 }}>
+      <label>Subtasks ({subtasks.length})</label>
+      {sortedSubtasks.length ? <div style={{ marginTop: 8 }}><OrganizableList items={sortedSubtasks} action="Organize" projects={allProjects} onDone={onDoneSubtask} onSaveItem={onSaveSubtask} onDeleteItem={onDeleteSubtask} onSplitItem={onSplitSubtask} onCreateProject={onCreateProject} /></div> : <p className="empty">No subtasks yet.</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <input value={subtaskText} onChange={(event) => setSubtaskText(event.target.value)} placeholder="Add a subtask…" style={{ flex: 1 }} onKeyDown={(event) => { if (event.key === "Enter") addSubtask(); }} />
+        <button type="button" className="ghost small-button" onClick={addSubtask}>Add</button>
+      </div>
+    </div>
+
+    <div className="actions">
+      <button className="danger" onClick={onDelete}>Delete project</button>
+      <button className="ghost" onClick={() => onToggleDone(!project.done)}>{project.done ? "Reopen project" : "Mark project done"}</button>
+      <button className="primary" onClick={save}>Save</button>
+    </div>
   </div></div>;
 }
 
-function WeekView({ items, laterItems, weekMinutes, categoryTotals, largestCategory, conflicts, targets, onSaveTargets, onOpen, onDone }: { items: Item[]; laterItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; onSaveTargets: (targets: Targets) => void; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+function WeekView({ items, laterItems, weekMinutes, categoryTotals, largestCategory, conflicts, targets, projects, onSaveTargets, onOpen, onDone }: { items: Item[]; laterItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; projects: Project[]; onSaveTargets: (targets: Targets) => void; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
   // Local editing draft, seeded from the saved targets. WeekView only mounts
   // after storage has loaded, so this always starts from real saved values.
   const [draftTargets, setDraftTargets] = useState<Targets>(targets);
   const weekStart = startOfWeek(new Date());
   const weekEnd = addDays(weekStart, 6);
   const weekRange = `${weekStart.toLocaleDateString(undefined, { month: "long", day: "numeric" })} – ${weekEnd.toLocaleDateString(undefined, { month: "long", day: "numeric" })}`;
-  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>Your week, at a glance.</h2><p className="hint" style={{ marginTop: 4 }}>{weekRange}</p></div><span className="tag accent">{estimateTag(weekMinutes)}</span></div>{conflicts.length > 0 && <div className="notice">This draft is above the target for {conflicts.map((item) => item.category).join(", ")}. Choose the trade-off yourself; nothing moved automatically.</div>}<div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar" style={{ background: "var(--paper-deep)" }}><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Items in the draft</div><h2>What is taking space?</h2></div></div>{items.length ? <div className="item-list">{sortDoneLast(items).map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Organize an item and choose Today or This Week to see it here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Later</div><h2>Parked, not forgotten.</h2></div><span className="tag">{laterItems.length}</span></div>{laterItems.length ? <div className="item-list">{sortDoneLast(laterItems).map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Items you commit to Later wait here until you pull them into a week.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Optional setup</div><h2>Set weekly targets.</h2></div></div><p className="empty">Targets help the draft show where your time is going. You can skip this and return here later.</p><div className="form-grid" style={{ marginTop: 14 }}>{categories.map((category) => <div className="field" key={category}><label htmlFor={`target-${category}`}>{category} hours</label><input id={`target-${category}`} type="number" min="0" step="0.5" value={draftTargets[category] ?? ""} onChange={(event) => setDraftTargets({ ...draftTargets, [category]: event.target.value ? Number(event.target.value) : undefined })} placeholder="Not set" /></div>)}</div><div className="actions"><button className="primary" onClick={() => onSaveTargets(draftTargets)}>Save targets</button></div></section></div>;
+  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Draft week</div><h2>Your week, at a glance.</h2><p className="hint" style={{ marginTop: 4 }}>{weekRange}</p></div><span className="tag accent">{estimateTag(weekMinutes)}</span></div>{conflicts.length > 0 && <div className="notice">This draft is above the target for {conflicts.map((item) => item.category).join(", ")}. Choose the trade-off yourself; nothing moved automatically.</div>}<div className="split-list">{categoryTotals.map(({ category, minutes }) => <div className="split-row" key={category}><span>{category}</span><div className="split-bar" style={{ background: "var(--paper-deep)" }}><div className="split-fill" style={{ width: `${Math.min(100, (minutes / largestCategory) * 100)}%` }} /></div><strong>{formatMinutes(minutes)}</strong></div>)}</div></section><section className="card"><div className="card-header"><div><div className="section-label">Items in the draft</div><h2>What is taking space?</h2></div></div>{items.length ? <div className="item-list">{sortDoneLast(items).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Organize an item and choose Today or This Week to see it here.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Later</div><h2>Parked, not forgotten.</h2></div><span className="tag">{laterItems.length}</span></div>{laterItems.length ? <div className="item-list">{sortDoneLast(laterItems).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Items you commit to Later wait here until you pull them into a week.</p>}</section><section className="card"><div className="card-header"><div><div className="section-label">Optional setup</div><h2>Set weekly targets.</h2></div></div><p className="empty">Targets help the draft show where your time is going. You can skip this and return here later.</p><div className="form-grid" style={{ marginTop: 14 }}>{categories.map((category) => <div className="field" key={category}><label htmlFor={`target-${category}`}>{category} hours</label><input id={`target-${category}`} type="number" min="0" step="0.5" value={draftTargets[category] ?? ""} onChange={(event) => setDraftTargets({ ...draftTargets, [category]: event.target.value ? Number(event.target.value) : undefined })} placeholder="Not set" /></div>)}</div><div className="actions"><button className="primary" onClick={() => onSaveTargets(draftTargets)}>Save targets</button></div></section></div>;
 }
 
 // The "This week" tab: one set of data, four lenses on it. Category is the
 // original draft-week view; Day/Week-by-day/Month all read from the same
 // committed items and the same "no date yet" pile, just laid out differently.
-function PlanTab({ weekItems, laterItems, weekMinutes, categoryTotals, largestCategory, conflicts, targets, onSaveTargets, onOpen, onDone, committedItems }: { weekItems: Item[]; laterItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; onSaveTargets: (targets: Targets) => void; onOpen: (item: Item) => void; onDone: (item: Item) => void; committedItems: Item[] }) {
+function PlanTab({ weekItems, laterItems, weekMinutes, categoryTotals, largestCategory, conflicts, targets, projects, onSaveTargets, onOpen, onDone, committedItems }: { weekItems: Item[]; laterItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; projects: Project[]; onSaveTargets: (targets: Targets) => void; onOpen: (item: Item) => void; onDone: (item: Item) => void; committedItems: Item[] }) {
   const [mode, setMode] = useState<"category" | "day" | "week" | "month">("category");
   const [day, setDay] = useState(() => new Date());
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
@@ -541,18 +723,18 @@ function PlanTab({ weekItems, laterItems, weekMinutes, categoryTotals, largestCa
 
   return <div className="stack">
     <div className="chips">{modes.map(([key, label]) => <button type="button" key={key} className={`chip ${mode === key ? "selected" : ""}`} onClick={() => setMode(key)}>{label}</button>)}</div>
-    {mode === "category" && <WeekView items={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={conflicts} targets={targets} onSaveTargets={onSaveTargets} onOpen={onOpen} onDone={onDone} />}
-    {mode === "day" && <DayPlanView date={day} setDate={setDay} items={committedItems} unscheduled={unscheduled} onOpen={onOpen} onDone={onDone} />}
-    {mode === "week" && <WeekByDayView weekStart={weekStart} setWeekStart={setWeekStart} items={committedItems} unscheduled={unscheduled} onOpen={onOpen} onDone={onDone} />}
-    {mode === "month" && <MonthPlanView month={month} setMonth={setMonth} items={committedItems} unscheduled={unscheduled} onOpen={onOpen} onDone={onDone} onPickDay={(picked) => { setDay(picked); setMode("day"); }} />}
+    {mode === "category" && <WeekView items={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={conflicts} targets={targets} projects={projects} onSaveTargets={onSaveTargets} onOpen={onOpen} onDone={onDone} />}
+    {mode === "day" && <DayPlanView date={day} setDate={setDay} items={committedItems} unscheduled={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} />}
+    {mode === "week" && <WeekByDayView weekStart={weekStart} setWeekStart={setWeekStart} items={committedItems} unscheduled={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} />}
+    {mode === "month" && <MonthPlanView month={month} setMonth={setMonth} items={committedItems} unscheduled={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} onPickDay={(picked) => { setDay(picked); setMode("day"); }} />}
   </div>;
 }
 
-function UnscheduledCard({ items, onOpen, onDone }: { items: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
-  return <section className="card"><div className="card-header"><div><div className="section-label">Unscheduled</div><h2>No specific day yet.</h2></div><span className="tag">{items.length}</span></div>{items.length ? <div className="item-list">{sortDoneLast(items).map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Everything committed has a day, or nothing is committed yet. Add a due date in Organize to put an item on the calendar.</p>}</section>;
+function UnscheduledCard({ items, projects, onOpen, onDone }: { items: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+  return <section className="card"><div className="card-header"><div><div className="section-label">Unscheduled</div><h2>No specific day yet.</h2></div><span className="tag">{items.length}</span></div>{items.length ? <div className="item-list">{sortDoneLast(items).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Everything committed has a day, or nothing is committed yet. Add a due date in Organize to put an item on the calendar.</p>}</section>;
 }
 
-function DayPlanView({ date, setDate, items, unscheduled, onOpen, onDone }: { date: Date; setDate: (date: Date) => void; items: Item[]; unscheduled: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+function DayPlanView({ date, setDate, items, unscheduled, projects, onOpen, onDone }: { date: Date; setDate: (date: Date) => void; items: Item[]; unscheduled: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
   const dayItems = itemsOnDate(items, toDateKey(date));
   const label = date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   return <div className="stack">
@@ -565,13 +747,13 @@ function DayPlanView({ date, setDate, items, unscheduled, onOpen, onDone }: { da
           <button className="ghost small-button" onClick={() => setDate(addDays(date, 1))}>Next →</button>
         </div>
       </div>
-      {dayItems.length ? <div className="item-list">{sortDoneLast(dayItems).map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Nothing scheduled for this day. Add a due date to an item in Organize to see it here.</p>}
+      {dayItems.length ? <div className="item-list">{sortDoneLast(dayItems).map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div> : <p className="empty">Nothing scheduled for this day. Add a due date to an item in Organize to see it here.</p>}
     </section>
-    <UnscheduledCard items={unscheduled} onOpen={onOpen} onDone={onDone} />
+    <UnscheduledCard items={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} />
   </div>;
 }
 
-function WeekByDayView({ weekStart, setWeekStart, items, unscheduled, onOpen, onDone }: { weekStart: Date; setWeekStart: (date: Date) => void; items: Item[]; unscheduled: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+function WeekByDayView({ weekStart, setWeekStart, items, unscheduled, projects, onOpen, onDone }: { weekStart: Date; setWeekStart: (date: Date) => void; items: Item[]; unscheduled: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
   const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
   const rangeLabel = `${weekStart.toLocaleDateString(undefined, { month: "long", day: "numeric" })} – ${addDays(weekStart, 6).toLocaleDateString(undefined, { month: "long", day: "numeric" })}`;
   return <div className="stack">
@@ -593,11 +775,11 @@ function WeekByDayView({ weekStart, setWeekStart, items, unscheduled, onOpen, on
         </div>;
       })}</div>
     </section>
-    <UnscheduledCard items={unscheduled} onOpen={onOpen} onDone={onDone} />
+    <UnscheduledCard items={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} />
   </div>;
 }
 
-function MonthPlanView({ month, setMonth, items, unscheduled, onOpen, onDone, onPickDay }: { month: Date; setMonth: (date: Date) => void; items: Item[]; unscheduled: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void; onPickDay: (date: Date) => void }) {
+function MonthPlanView({ month, setMonth, items, unscheduled, projects, onOpen, onDone, onPickDay }: { month: Date; setMonth: (date: Date) => void; items: Item[]; unscheduled: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void; onPickDay: (date: Date) => void }) {
   const first = startOfMonth(month);
   const totalDays = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
   const leadingBlanks = first.getDay() === 0 ? 6 : first.getDay() - 1;
@@ -625,11 +807,11 @@ function MonthPlanView({ month, setMonth, items, unscheduled, onOpen, onDone, on
         })}
       </div>
     </section>
-    <UnscheduledCard items={unscheduled} onOpen={onOpen} onDone={onDone} />
+    <UnscheduledCard items={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} />
   </div>;
 }
 
-function ReflectionPanel({ doneToday, doneThisWeek, unfinishedThisWeek, openItems, allItems, reflections, onOpen, onDrop, onReplace, onDone, onSave }: { doneToday: Item[]; doneThisWeek: Item[]; unfinishedThisWeek: Item[]; openItems: Item[]; allItems: Item[]; reflections: Reflection[]; onOpen: (item: Item) => void; onDrop: (id: string) => void; onReplace: (originalId: string, chosenId: string) => void; onDone: (item: Item) => void; onSave: (type: "daily" | "weekly", text: string) => void }) {
+function ReflectionPanel({ doneToday, doneThisWeek, unfinishedThisWeek, openItems, allItems, projects, reflections, onOpen, onDrop, onReplace, onDone, onSave }: { doneToday: Item[]; doneThisWeek: Item[]; unfinishedThisWeek: Item[]; openItems: Item[]; allItems: Item[]; projects: Project[]; reflections: Reflection[]; onOpen: (item: Item) => void; onDrop: (id: string) => void; onReplace: (originalId: string, chosenId: string) => void; onDone: (item: Item) => void; onSave: (type: "daily" | "weekly", text: string) => void }) {
   // Items you've already decided on this sitting - Carry forward makes no
   // storage change (there is nothing to "carry," the item just stays where
   // it is), so this local set is the only record that you've dealt with it,
@@ -705,7 +887,7 @@ function ReflectionPanel({ doneToday, doneThisWeek, unfinishedThisWeek, openItem
       <div className="field full" style={{ marginTop: 18 }}>
         <label>Open items ({visibleOpen.length})</label>
         {visibleOpen.length ? <div className="item-list" style={{ marginTop: 8 }}>{visibleOpen.map((item) => <div className="item-row-wrap" key={item.id}>
-          <div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.category && <span className="tag">{item.category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}</div></div><button className="ghost small-button" onClick={() => onOpen(item)}>Edit</button></div>
+          <div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{effectiveCategory(item, projects) && <span className="tag">{effectiveCategory(item, projects)}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}</div></div><button className="ghost small-button" onClick={() => onOpen(item)}>Edit</button></div>
           <div className="row-footer">
             <button className="ghost small-button" onClick={() => onDone(item)}>Done</button>
             <button className="ghost small-button" onClick={() => acknowledge(item.id)}>Carry forward</button>
@@ -734,7 +916,7 @@ function ReflectionPanel({ doneToday, doneThisWeek, unfinishedThisWeek, openItem
       <div className="field full" style={{ marginTop: 18 }}>
         <label>What stayed unfinished ({visibleUnfinished.length})</label>
         {visibleUnfinished.length ? <div className="item-list" style={{ marginTop: 8 }}>{visibleUnfinished.map((item) => <div className="item-row-wrap" key={item.id}>
-          <div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{item.category && <span className="tag">{item.category}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}</div></div><button className="ghost small-button" onClick={() => onOpen(item)}>Edit</button></div>
+          <div className="item-row"><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta">{effectiveCategory(item, projects) && <span className="tag">{effectiveCategory(item, projects)}</span>}{item.bucket && <span className="tag">{item.bucket}</span>}{item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}</div></div><button className="ghost small-button" onClick={() => onOpen(item)}>Edit</button></div>
           <div className="row-footer">
             <button className="ghost small-button" onClick={() => onDone(item)}>Done</button>
             <button className="ghost small-button" onClick={() => weeklyAcknowledge(item.id)}>Carry forward</button>

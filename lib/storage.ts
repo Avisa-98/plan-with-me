@@ -18,7 +18,7 @@ export type Item = {
   dueDate?: string;
   eventStart?: string;
   eventEnd?: string;
-  project?: string;
+  projectId?: string;
   done?: boolean;
   actualMinutes?: number;
   splitFrom?: string;
@@ -27,30 +27,41 @@ export type Item = {
   updatedAt: string;
 };
 
+// A project's category applies to every one of its subtasks - a subtask
+// never carries its own category while it belongs to a project (see
+// effectiveCategory in lib/projects.ts). startDate/endDate mark the
+// project's own window (a one-week sprint, a three-month rollout), separate
+// from any individual subtask's own due date.
+export type Project = { id: string; name: string; category?: Category; startDate?: string; endDate?: string; done: boolean; createdAt: string; updatedAt: string };
+
 export type Reflection = { id: string; type: "daily" | "weekly"; text: string; createdAt: string };
 export type Targets = Partial<Record<Category, number>>;
-export type StoredData = { deviceKey: string; items: Item[]; reflections: Reflection[]; targets: Targets };
+export type StoredData = { deviceKey: string; items: Item[]; reflections: Reflection[]; targets: Targets; projects: Project[] };
 
 const STORAGE_KEY = "plan-with-me:v1";
 
 export function emptyData(): StoredData {
-  return { deviceKey: crypto.randomUUID(), items: [], reflections: [], targets: {} };
+  return { deviceKey: crypto.randomUUID(), items: [], reflections: [], targets: {}, projects: [] };
 }
 
-// Two renames normalized here:
+// Three renames normalized here:
 // - "Unprocessed" (the old status value) -> "Inbox"
 // - "Entertainment" (the old category name) -> "Personal", both on items
 //   and on any weekly target key set for it
-// Anything saved before either rename still has the old string sitting in
-// someone's browser or an old backup file - this fixes both on the way in,
-// so nothing is silently left with a value the current app no longer
-// recognizes, and nothing (an item, a target) disappears because of it.
+// - the old free-text `project` field on an item -> a real Project entity,
+//   with items that already shared the same project name grouped into one
+//   migrated project rather than duplicated per item
+// Anything saved before these renames still has the old value sitting in
+// someone's browser or an old backup file - this fixes all three on the way
+// in, so nothing is silently left with a value the current app no longer
+// recognizes, and nothing (an item, a target, a project grouping) disappears
+// because of it.
 function migrate(data: StoredData): StoredData {
   // Only touch the specific field that needs fixing, on only the items that
   // need it - spreading in a key unconditionally (even set to undefined)
   // would add it to items that never had it, which is a different object
   // shape than the original, not merely a fixed value.
-  const items = data.items.map((item) => {
+  const statusAndCategoryFixed = data.items.map((item) => {
     const fix: Partial<Item> = {};
     if ((item.status as string) === "Unprocessed") fix.status = "Inbox";
     if ((item.category as string) === "Entertainment") fix.category = "Personal";
@@ -63,7 +74,23 @@ function migrate(data: StoredData): StoredData {
     delete targets.Entertainment;
   }
 
-  return { ...data, items, targets };
+  const projects = [...data.projects];
+  const projectByName = new Map(projects.map((project) => [project.name, project]));
+  const items = statusAndCategoryFixed.map((item) => {
+    const legacyName = (item as Item & { project?: string }).project;
+    if (!legacyName || item.projectId) return item;
+    let project = projectByName.get(legacyName);
+    if (!project) {
+      const now = new Date().toISOString();
+      project = { id: crypto.randomUUID(), name: legacyName, done: false, createdAt: now, updatedAt: now };
+      projectByName.set(legacyName, project);
+      projects.push(project);
+    }
+    const { project: _legacyProject, ...rest } = item as Item & { project?: string };
+    return { ...rest, projectId: project.id };
+  });
+
+  return { ...data, items, targets, projects };
 }
 
 export function loadData(): StoredData {
