@@ -57,16 +57,28 @@ const PLAN_CATEGORIES: Category[] = ["Work", "Social", "Personal"];
 function PlanRow({ item, projects, onSave, onDelete, onCreateProject, onAddChild, expanded, onToggleExpand }: { item: Item; projects: Project[]; onSave: (item: Item) => void; onDelete: () => void; onCreateProject: (project: Project) => void; onAddChild: (text: string, type: ItemType) => void; expanded: boolean; onToggleExpand: () => void }) {
   const [draft, setDraft] = useState<Item>(item);
   const [showSplit, setShowSplit] = useState(false);
-  const set = (changes: Partial<Item>) => setDraft((current) => { const next = { ...current, ...changes }; onSave(next); return next; });
+  const [hours, setHours] = useState(item.estimateMinutes ? String(Math.floor(item.estimateMinutes / 60)) : "");
+  const [minutes, setMinutes] = useState(item.estimateMinutes ? String(item.estimateMinutes % 60) : "");
+  // Chip taps only update local draft, never onSave directly - any field
+  // that flips isIdea()/isWeekItem()/isMonthItem()/isLater() (lib/views.ts)
+  // would otherwise fail isUnresolved() the instant it's tapped and yank
+  // this whole row out from under the user mid-edit, before there was a
+  // chance to set the rest of the fields. onSave fires exactly once, when
+  // the row is committed below - the same one-commit-moment shape the old
+  // OrganizePanel's single Save button always had.
+  const set = (changes: Partial<Item>) => setDraft((current) => ({ ...current, ...changes }));
   const isIdea = (draft.type ?? "task") === "idea";
 
-  // Picking a bucket doesn't commit the item on its own - status only flips
-  // to Planned once you collapse the row. Committing live, per chip tap,
-  // would fail isUnresolved() (lib/views.ts) the instant a bucket was
-  // picked and yank the row out of this very list mid-edit, before there
-  // was a chance to also set category/estimate/project.
+  function setEstimate(nextHours: string, nextMinutes: string) {
+    const total = (Number(nextHours) || 0) * 60 + (Number(nextMinutes) || 0);
+    set({ estimateMinutes: total || undefined });
+  }
+
   function finishOrganizing() {
-    if (!isIdea && draft.bucket && draft.status !== "Planned") set({ status: "Planned" });
+    // Ideas skip the schedule (and the status it drives) entirely, same
+    // rule as everywhere else in the app - isIdea() overrides regardless
+    // of status, so there's nothing to compute here.
+    onSave({ ...draft, status: isIdea ? draft.status : (draft.bucket ? "Planned" : "Inbox") });
     onToggleExpand();
   }
 
@@ -84,15 +96,16 @@ function PlanRow({ item, projects, onSave, onDelete, onCreateProject, onAddChild
           {PLAN_CATEGORIES.map((category) => <button type="button" key={category} className={`chip ${draft.category === category ? "selected" : ""}`} onClick={() => set({ category })}>{category}</button>)}
         </div>
         <div style={{ marginTop: 8 }}><BucketDateChips bucket={draft.bucket} dueDate={draft.dueDate} onChange={({ bucket, dueDate }) => set({ bucket, dueDate })} /></div>
-        <div className="row-footer" style={{ marginTop: 8 }}>
-          <input inputMode="numeric" value={draft.estimateMinutes ?? ""} onChange={(event) => set({ estimateMinutes: event.target.value ? Number(event.target.value) : undefined })} placeholder="Estimate (min)" style={{ width: 140 }} />
+        <div className="row-footer" style={{ marginTop: 8, alignItems: "flex-end" }}>
+          <div className="field" style={{ width: 90 }}><label>Hours</label><input inputMode="numeric" value={hours} onChange={(event) => { setHours(event.target.value); setEstimate(event.target.value, minutes); }} placeholder="0" /></div>
+          <div className="field" style={{ width: 90 }}><label>Minutes</label><input inputMode="numeric" value={minutes} onChange={(event) => { setMinutes(event.target.value); setEstimate(hours, event.target.value); }} placeholder="0" /></div>
           <ProjectQuickAssign projectId={draft.projectId} projects={projects} onChange={(projectId) => set({ projectId, category: projectId ? undefined : draft.category })} onCreate={onCreateProject} />
           <button type="button" className="ghost small-button" onClick={() => setShowSplit((current) => !current)}>Split</button>
         </div>
       </>}
       <div className="actions">
         <button className="danger" onClick={onDelete}>Delete</button>
-        <button className="ghost" onClick={finishOrganizing}>Collapse</button>
+        <button className="primary" onClick={finishOrganizing}>{isIdea ? "Add to idea log" : draft.bucket ? "Commit to plan" : "Save in Inbox"}</button>
       </div>
       {showSplit && <SplitInline item={item} onAddChild={onAddChild} />}
     </div>
