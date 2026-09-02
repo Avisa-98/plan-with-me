@@ -245,3 +245,38 @@ test("parseImport fills in any missing fields with defaults, but keeps the file'
   assert.deepEqual(back?.targets, {});
   assert.equal(back?.deviceKey, "device-2");
 });
+
+test("migrate maps old categories onto the new three-category set, for items and projects", () => {
+  const now = new Date().toISOString();
+  const raw = {
+    deviceKey: "d",
+    items: [
+      { id: "1", text: "a", status: "Inbox", category: "Family", createdAt: now, updatedAt: now },
+      { id: "2", text: "b", status: "Inbox", category: "Friends", createdAt: now, updatedAt: now },
+      { id: "3", text: "c", status: "Inbox", category: "Health", createdAt: now, updatedAt: now },
+      { id: "4", text: "d", status: "Inbox", category: "Work", createdAt: now, updatedAt: now },
+    ],
+    reflections: [],
+    targets: {},
+    projects: [{ id: "p1", name: "P", category: "Friends", done: false, createdAt: now, updatedAt: now }],
+  };
+  const result = parseImport(JSON.stringify(raw));
+  assert.equal(result?.items.find((i) => i.id === "1")?.category, "Social");
+  assert.equal(result?.items.find((i) => i.id === "2")?.category, "Social");
+  assert.equal(result?.items.find((i) => i.id === "3")?.category, "Personal");
+  assert.equal(result?.items.find((i) => i.id === "4")?.category, "Work");
+  assert.equal(result?.projects.find((p) => p.id === "p1")?.category, "Social");
+});
+
+test("migrate leaves This Month and Later buckets untouched, and This Month is a valid new bucket", () => {
+  const now = new Date().toISOString();
+  const raw = {
+    deviceKey: "d",
+    items: [{ id: "1", text: "a", status: "Planned", bucket: "This Month", createdAt: now, updatedAt: now }],
+    reflections: [],
+    targets: {},
+    projects: [],
+  };
+  const result = parseImport(JSON.stringify(raw));
+  assert.equal(result?.items[0].bucket, "This Month");
+});

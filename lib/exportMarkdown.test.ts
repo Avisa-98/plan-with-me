@@ -40,13 +40,13 @@ test("category, estimate, and due date are annotated inline when present", () =>
 });
 
 test("a subtask's line shows its project's category, not its own stale field", () => {
-  const proj = project({ id: "p1", name: "MIS Rollout", category: "Health" });
+  const proj = project({ id: "p1", name: "MIS Rollout", category: "Personal" });
   const md = exportMarkdown(data(
     [item({ text: "draft the SOW", status: "Planned", bucket: "Today", projectId: "p1", category: "Work", estimateMinutes: 60 })],
     [],
     [proj],
   ));
-  assert.match(md, /- \[ \] draft the SOW \(Health · 1h\)/);
+  assert.match(md, /- \[ \] draft the SOW \(Personal · 1h\)/);
 });
 
 test("a task with no category, estimate, or due date shows with no parentheses at all", () => {

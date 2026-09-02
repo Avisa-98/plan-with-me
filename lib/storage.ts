@@ -1,5 +1,5 @@
-export type Category = "Work" | "Family" | "Friends" | "Health" | "Personal";
-export type Bucket = "Today" | "This Week" | "Later";
+export type Category = "Work" | "Social" | "Personal";
+export type Bucket = "Today" | "This Week" | "This Month" | "Later";
 export type ItemStatus = "Inbox" | "Planned";
 // Undefined means task - every item captured before this field existed, and
 // every new capture until someone chooses otherwise, is a task with no
@@ -61,10 +61,12 @@ function migrate(data: StoredData): StoredData {
   // need it - spreading in a key unconditionally (even set to undefined)
   // would add it to items that never had it, which is a different object
   // shape than the original, not merely a fixed value.
+  const CATEGORY_MIGRATION: Record<string, Category> = { Family: "Social", Friends: "Social", Health: "Personal" };
   const statusAndCategoryFixed = data.items.map((item) => {
     const fix: Partial<Item> = {};
     if ((item.status as string) === "Unprocessed") fix.status = "Inbox";
     if ((item.category as string) === "Entertainment") fix.category = "Personal";
+    if (item.category && (item.category as string) in CATEGORY_MIGRATION) fix.category = CATEGORY_MIGRATION[item.category as string];
     return Object.keys(fix).length ? { ...item, ...fix } : item;
   });
 
@@ -74,7 +76,10 @@ function migrate(data: StoredData): StoredData {
     delete targets.Entertainment;
   }
 
-  const projects = [...data.projects];
+  const projects = data.projects.map((project) => {
+    if (project.category && (project.category as string) in CATEGORY_MIGRATION) return { ...project, category: CATEGORY_MIGRATION[project.category as string] };
+    return project;
+  });
   const projectByName = new Map(projects.map((project) => [project.name, project]));
   const items = statusAndCategoryFixed.map((item) => {
     const legacyName = (item as Item & { project?: string }).project;

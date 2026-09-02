@@ -53,11 +53,11 @@ test("effectiveCategory returns a standalone item's own category when it has no 
 });
 
 test("effectiveCategory ignores a subtask's own category field and uses its project's instead", () => {
-  const proj = project({ id: "p1", category: "Health" });
+  const proj = project({ id: "p1", category: "Personal" });
   // Stale category left over from before this item had a project - must be
   // ignored, never shown or counted.
   const subtask = item({ projectId: "p1", category: "Work" });
-  assert.equal(effectiveCategory(subtask, [proj]), "Health");
+  assert.equal(effectiveCategory(subtask, [proj]), "Personal");
 });
 
 test("effectiveCategory is undefined when the project itself has no category set yet", () => {
