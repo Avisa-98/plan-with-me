@@ -10,7 +10,6 @@ import { effectiveCategory, sortProjectsDoneLast, subtaskTotalMinutes, subtasksO
 import { formatMinutes, ItemRow, ItemListWithDone, DoneModal } from "./components/shared";
 import { PlanPage } from "./components/PlanPage";
 import { OverviewPage } from "./components/OverviewPage";
-import { useIsDesktop } from "./hooks/useIsDesktop";
 
 const categories: Category[] = ["Work", "Social", "Personal"];
 const buckets: Bucket[] = ["Today", "This Week", "This Month", "Later"];
@@ -20,7 +19,6 @@ export default function Home() {
   const [data, setData] = useState<StoredData>(() => emptyData());
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState<Tab>("plan");
-  const isDesktop = useIsDesktop();
   const [capture, setCapture] = useState("");
   const [selected, setSelected] = useState<Item | null>(null);
   const [splitting, setSplitting] = useState<Item | null>(null);
@@ -364,21 +362,12 @@ export default function Home() {
         ) : (
           <header className="topbar-compact"><span className="eyebrow">Plan With Me</span></header>
         )}
-        {!isDesktop && <nav className="nav" aria-label="Primary navigation">
+        <nav className="nav" aria-label="Primary navigation">
           {nav.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</button>)}
-        </nav>}
+        </nav>
 
-        {isDesktop ? (
-          <div className="stack">
-            {planPageNode}
-            <OverviewPage layout="dashboard" {...overviewProps} />
-          </div>
-        ) : (
-          <>
-            {tab === "plan" && planPageNode}
-            {tab === "overview" && <OverviewPage layout="tabs" {...overviewProps} />}
-          </>
-        )}
+        {tab === "plan" && planPageNode}
+        {tab === "overview" && <OverviewPage {...overviewProps} />}
 
         <div className="device-banner" style={{ marginTop: 18 }}>
           <p>Saved on this device only — no account, no cloud backup. Clearing your browser data clears your plan.</p>

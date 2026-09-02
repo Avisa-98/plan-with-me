@@ -304,8 +304,7 @@ function SavedForLater({ items, projects, onOpen, onDone }: { items: Item[]; pro
 const OVERVIEW_MODES = [["today", "Today"], ["week", "Week"], ["month", "Month"], ["projects", "Projects"], ["reflect", "Reflect"]] as const;
 type OverviewMode = (typeof OVERVIEW_MODES)[number][0];
 
-export function OverviewPage({ layout, todayItems, thisWeekItems, weekItems, weekMinutes, categoryTotals, largestCategory, categoryConflicts, targets, onSaveTargets, committedItems, laterItems, projects, allItems, onOpen, onOpenProject, onDone, onCreateProject, doneToday, doneThisWeek, unfinishedThisWeek, openItems, reflections, onDrop, onReplace, onSaveReflection }: {
-  layout: "tabs" | "dashboard";
+export function OverviewPage({ todayItems, thisWeekItems, weekItems, weekMinutes, categoryTotals, largestCategory, categoryConflicts, targets, onSaveTargets, committedItems, laterItems, projects, allItems, onOpen, onOpenProject, onDone, onCreateProject, doneToday, doneThisWeek, unfinishedThisWeek, openItems, reflections, onDrop, onReplace, onSaveReflection }: {
   todayItems: Item[];
   thisWeekItems: Item[];
   weekItems: Item[];
@@ -344,14 +343,6 @@ export function OverviewPage({ layout, todayItems, thisWeekItems, weekItems, wee
     projects: <ProjectsSection projects={projects} allItems={allItems} onOpen={onOpenProject} onCreateProject={onCreateProject} />,
     reflect: <ReflectionPanel doneToday={doneToday} doneThisWeek={doneThisWeek} unfinishedThisWeek={unfinishedThisWeek} openItems={openItems} allItems={allItems} projects={projects} reflections={reflections} onOpen={onOpen} onDrop={onDrop} onReplace={onReplace} onDone={onDone} onSave={onSaveReflection} />,
   };
-
-  if (layout === "dashboard") {
-    return <div className="stack">
-      <div className="dashboard-columns">{sections.today}{sections.week}{sections.month}</div>
-      <div className="dashboard-columns">{sections.projects}{sections.reflect}</div>
-      <SavedForLater items={laterItems} projects={projects} onOpen={onOpen} onDone={onDone} />
-    </div>;
-  }
 
   return <div className="stack">
     <div className="chips">{OVERVIEW_MODES.map(([key, label]) => <button type="button" key={key} className={`chip ${mode === key ? "selected" : ""}`} onClick={() => setMode(key)}>{label}</button>)}</div>
