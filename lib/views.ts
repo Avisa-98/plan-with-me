@@ -16,6 +16,10 @@ import type { Item } from "./storage";
  * Together these make stranding and duplication impossible by construction
  * rather than by remembering to keep the predicates in sync.
  *
+ * `isWeekItem` covers the Today/This Week buckets (the Overview Today/Week
+ * views); `isMonthItem` covers This Month on its own (the Overview Month
+ * view); `isLater` covers Later (Saved for Later).
+ *
  * `lib/views.test.ts` enforces this over every status/bucket/archived/type
  * combination.
  */
@@ -32,12 +36,16 @@ export function isWeekItem(item: Item) {
   return !isArchived(item) && !isIdea(item) && item.status === "Planned" && (item.bucket === "Today" || item.bucket === "This Week");
 }
 
+export function isMonthItem(item: Item) {
+  return !isArchived(item) && !isIdea(item) && item.status === "Planned" && item.bucket === "This Month";
+}
+
 export function isLater(item: Item) {
   return !isArchived(item) && !isIdea(item) && item.status === "Planned" && item.bucket === "Later";
 }
 
 export function isUnresolved(item: Item) {
-  return !isArchived(item) && !isIdea(item) && !isWeekItem(item) && !isLater(item);
+  return !isArchived(item) && !isIdea(item) && !isWeekItem(item) && !isMonthItem(item) && !isLater(item);
 }
 
 // Not-done items first, done items after - keeping each group in whatever

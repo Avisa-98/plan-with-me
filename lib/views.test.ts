@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Item } from "./storage.ts";
-import { isUnresolved, isWeekItem, isLater, isArchived, isIdea, sortDoneLast } from "./views.ts";
+import { isUnresolved, isWeekItem, isMonthItem, isLater, isArchived, isIdea, sortDoneLast } from "./views.ts";
 
 function item(over: Partial<Item> = {}): Item {
   const now = new Date().toISOString();
@@ -11,13 +11,13 @@ function item(over: Partial<Item> = {}): Item {
 // An item is reachable if at least one of the app's views will render it.
 // Every item MUST appear somewhere, or the user has no way to reach it again.
 function reachable(i: Item) {
-  return isUnresolved(i) || isWeekItem(i) || isLater(i) || isArchived(i) || isIdea(i);
+  return isUnresolved(i) || isWeekItem(i) || isMonthItem(i) || isLater(i) || isArchived(i) || isIdea(i);
 }
 
 // An item should appear on exactly one surface, never two - otherwise the
 // same thing looks "done" in the Archive and still "waiting" in the inbox.
 function surfaceCount(i: Item) {
-  return [isUnresolved(i), isWeekItem(i), isLater(i), isArchived(i), isIdea(i)].filter(Boolean).length;
+  return [isUnresolved(i), isWeekItem(i), isMonthItem(i), isLater(i), isArchived(i), isIdea(i)].filter(Boolean).length;
 }
 
 test("a freshly captured note shows in Inbox", () => {
@@ -30,6 +30,12 @@ test("an item committed to Today shows in the week", () => {
 
 test("an item committed to This Week shows in the week", () => {
   assert.equal(isWeekItem(item({ status: "Planned", bucket: "This Week" })), true);
+});
+
+test("an item committed to This Month shows in the month view, and leaves the inbox once it does", () => {
+  const monthItem = item({ status: "Planned", bucket: "This Month" });
+  assert.equal(isMonthItem(monthItem), true);
+  assert.equal(isUnresolved(monthItem), false, "a committed This Month item must not still clutter the inbox");
 });
 
 test("an item committed to Later is still reachable somewhere", () => {
@@ -65,7 +71,7 @@ test("archiving wins even over an idea", () => {
 });
 
 test("no item in any valid state is unreachable, and none appears on two surfaces at once", () => {
-  const buckets = [undefined, "Today", "This Week", "Later"] as const;
+  const buckets = [undefined, "Today", "This Week", "This Month", "Later"] as const;
   const statuses = ["Inbox", "Planned"] as const;
   const archivedFlags = [false, true] as const;
   const types = [undefined, "task", "idea"] as const;

@@ -60,6 +60,16 @@ function PlanRow({ item, projects, onSave, onDelete, onCreateProject, onAddChild
   const set = (changes: Partial<Item>) => setDraft((current) => { const next = { ...current, ...changes }; onSave(next); return next; });
   const isIdea = (draft.type ?? "task") === "idea";
 
+  // Picking a bucket doesn't commit the item on its own - status only flips
+  // to Planned once you collapse the row. Committing live, per chip tap,
+  // would fail isUnresolved() (lib/views.ts) the instant a bucket was
+  // picked and yank the row out of this very list mid-edit, before there
+  // was a chance to also set category/estimate/project.
+  function finishOrganizing() {
+    if (!isIdea && draft.bucket && draft.status !== "Planned") set({ status: "Planned" });
+    onToggleExpand();
+  }
+
   if (!expanded) return <ItemRow item={item} projects={projects} onOpen={onToggleExpand} action="Organize" />;
 
   return <div className="item-row-wrap">
@@ -73,7 +83,7 @@ function PlanRow({ item, projects, onSave, onDelete, onCreateProject, onAddChild
         <div className="chips" style={{ marginTop: 8 }}>
           {PLAN_CATEGORIES.map((category) => <button type="button" key={category} className={`chip ${draft.category === category ? "selected" : ""}`} onClick={() => set({ category })}>{category}</button>)}
         </div>
-        <div style={{ marginTop: 8 }}><BucketDateChips bucket={draft.bucket} dueDate={draft.dueDate} onChange={({ bucket, dueDate }) => set({ bucket, status: bucket ? "Planned" : "Inbox", dueDate })} /></div>
+        <div style={{ marginTop: 8 }}><BucketDateChips bucket={draft.bucket} dueDate={draft.dueDate} onChange={({ bucket, dueDate }) => set({ bucket, dueDate })} /></div>
         <div className="row-footer" style={{ marginTop: 8 }}>
           <input inputMode="numeric" value={draft.estimateMinutes ?? ""} onChange={(event) => set({ estimateMinutes: event.target.value ? Number(event.target.value) : undefined })} placeholder="Estimate (min)" style={{ width: 140 }} />
           <ProjectQuickAssign projectId={draft.projectId} projects={projects} onChange={(projectId) => set({ projectId, category: projectId ? undefined : draft.category })} onCreate={onCreateProject} />
@@ -82,7 +92,7 @@ function PlanRow({ item, projects, onSave, onDelete, onCreateProject, onAddChild
       </>}
       <div className="actions">
         <button className="danger" onClick={onDelete}>Delete</button>
-        <button className="ghost" onClick={onToggleExpand}>Collapse</button>
+        <button className="ghost" onClick={finishOrganizing}>Collapse</button>
       </div>
       {showSplit && <SplitInline item={item} onAddChild={onAddChild} />}
     </div>

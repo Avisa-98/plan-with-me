@@ -26,10 +26,13 @@ export function BucketDateChips({ bucket, dueDate, onChange }: { bucket: Bucket 
       {BUCKETS.map((option) => <button type="button" key={option} className={`chip ${bucket === option ? "selected" : ""}`} onClick={() => pick(option)}>{option}</button>)}
     </div>
 
-    {bucket === "This Week" && <div className="week-grid" style={{ marginTop: 8 }}>
+    {bucket === "This Week" && <div className="month-grid" style={{ marginTop: 8 }}>
       {weekDays(startOfWeek(new Date())).map((day) => {
         const key = toDateKey(day);
-        return <button type="button" key={key} className={`week-day-item ${dueDate === key ? "chunk-pending" : ""}`} onClick={() => pickDate(day)}>{day.toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}</button>;
+        return <button type="button" key={key} className={`month-cell ${dueDate === key ? "chunk-pending" : ""}`} onClick={() => pickDate(day)}>
+          <span className="month-heading" style={{ padding: 0 }}>{day.toLocaleDateString(undefined, { weekday: "short" })}</span>
+          <span className="month-cell-num">{day.getDate()}</span>
+        </button>;
       })}
     </div>}
 
