@@ -9,34 +9,17 @@ import { isDoneToday, isDoneThisWeek, rankReplacementCandidates } from "../lib/r
 import { addDays, itemsOnDate, startOfMonth, startOfWeek, toDateKey, unscheduledItems } from "../lib/schedule";
 import { effectiveCategory, sortProjectsDoneLast, subtaskTotalMinutes, subtasksOf } from "../lib/projects";
 import { formatMinutes, estimateTag, ItemRow, DoneModal } from "./components/shared";
+import { PlanPage } from "./components/PlanPage";
 
-const categories: Category[] = ["Work", "Family", "Friends", "Health", "Personal"];
-const buckets: Bucket[] = ["Today", "This Week", "Later"];
+const categories: Category[] = ["Work", "Social", "Personal"];
+const buckets: Bucket[] = ["Today", "This Week", "This Month", "Later"];
 type Tab = "today" | "inbox" | "week" | "reflections";
-
-function CaptureForm({ capture, setCapture, onSubmit, onCancel, autoFocus }: { capture: string; setCapture: (value: string) => void; onSubmit: () => void; onCancel?: () => void; autoFocus?: boolean }) {
-  return <section className="card capture-card" style={{ marginBottom: 18 }}>
-    <div className="card-header"><div><h2>Add a thought</h2></div><span className="tag">No decision needed</span></div>
-    <textarea id="capture" value={capture} onChange={(event) => setCapture(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) onSubmit(); }} placeholder="Write a concise thought, task, event, or idea…" aria-label="Add a thought" autoFocus={autoFocus} />
-    <div className="capture-footer">
-      <p className="hint">Save it now. Organize it from Inbox whenever you have the space.</p>
-      <div style={{ display: "flex", gap: 8 }}>
-        {onCancel && <button className="ghost" onClick={onCancel}>Cancel</button>}
-        <button className="primary" onClick={onSubmit}>Add a thought</button>
-      </div>
-    </div>
-  </section>;
-}
 
 export default function Home() {
   const [data, setData] = useState<StoredData>(() => emptyData());
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState<Tab>("today");
   const [capture, setCapture] = useState("");
-  // Whether the full capture form is expanded on a non-Overview tab - those
-  // tabs show a compact button instead, so their own content isn't pushed
-  // below the fold by a form most visits don't need.
-  const [captureExpanded, setCaptureExpanded] = useState(false);
   const [selected, setSelected] = useState<Item | null>(null);
   const [splitting, setSplitting] = useState<Item | null>(null);
   const [projectPanel, setProjectPanel] = useState<Project | null>(null);
@@ -52,8 +35,6 @@ export default function Home() {
   // layout.tsx already set the real theme on the page before React ever
   // ran, so the effect below just reads that back rather than guessing.
   const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [summaryOpen, setSummaryOpen] = useState(false);
-  const [summary, setSummary] = useState<Reflection | null>(null);
 
   useEffect(() => {
     setData(loadData());
@@ -69,10 +50,6 @@ export default function Home() {
     const timer = window.setTimeout(() => setToast(""), 2600);
     return () => window.clearTimeout(timer);
   }, [toast]);
-
-  useEffect(() => {
-    setCaptureExpanded(false);
-  }, [tab]);
 
   useEffect(() => {
     const current = document.documentElement.getAttribute("data-theme");
@@ -191,7 +168,6 @@ export default function Home() {
     }
     commitNewItem(text, undefined, "Saved to Inbox.");
     setCapture("");
-    setCaptureExpanded(false);
   }
 
   function keepDuplicate() {
@@ -199,13 +175,21 @@ export default function Home() {
     const fromCapture = !duplicate.splitFrom;
     commitNewItem(duplicate.text, duplicate.splitFrom, fromCapture ? "Saved as a second note." : "Added as a second item from this note.", duplicate.type);
     setDuplicate(null);
-    if (fromCapture) { setCapture(""); setCaptureExpanded(false); }
+    if (fromCapture) setCapture("");
   }
 
   function saveItem(updated: Item) {
     updateData((current) => ({ ...current, items: current.items.map((item) => item.id === updated.id ? { ...updated, updatedAt: new Date().toISOString() } : item) }));
     setSelected(null);
     showToast(updated.type === "idea" ? "Added to your idea log." : updated.status === "Planned" ? "Added to your draft week." : "Saved in Inbox.");
+  }
+
+  // Same write as saveItem, minus the toast - PlanPage's organize rows call
+  // this once per chip tap, and a toast per tap would be noise, not
+  // feedback. Modal-based edit paths (OrganizePanel) keep using saveItem,
+  // where one toast per explicit Save action is the right amount.
+  function updateItemSilently(updated: Item) {
+    updateData((current) => ({ ...current, items: current.items.map((item) => item.id === updated.id ? { ...updated, updatedAt: new Date().toISOString() } : item) }));
   }
 
   // One tap from the Inbox row - no need to open Organize just to say
@@ -362,20 +346,12 @@ export default function Home() {
           {nav.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</button>)}
         </nav>
 
-        {/* The full form always leads on Overview - that's the one screen whose
-            whole job is capture. Elsewhere it stays a compact button so a
-            tab's own content isn't pushed below the fold by a form most
-            visits to that tab don't need. */}
-        {tab === "today" ? (
-          <CaptureForm capture={capture} setCapture={setCapture} onSubmit={addThought} />
-        ) : captureExpanded ? (
-          <CaptureForm capture={capture} setCapture={setCapture} onSubmit={addThought} onCancel={() => setCaptureExpanded(false)} autoFocus />
-        ) : (
-          <button type="button" className="capture-compact" onClick={() => setCaptureExpanded(true)}>Add a thought</button>
-        )}
-
         {tab === "today" && <TodayView todayItems={todayItems} thisWeekItems={thisWeekItems} projects={data.projects} onOpen={(item) => setSelected(item)} onDone={toggleDone} />}
-        {tab === "inbox" && <Inbox items={unresolved} allItems={data.items} ideaItems={ideaItems} archivedItems={archivedItems} projects={data.projects} onSaveItem={saveItem} onDeleteItem={deleteItem} onSplit={(item) => setSplitting(item)} onArchive={archiveItem} onOpenProject={(project) => setProjectPanel(project)} onCreateProject={createProject} onDone={toggleDone} onQuickCommit={quickCommit} onSummary={() => { setSummaryOpen(true); setSummary(null); }} />}
+        {tab === "inbox" && <>
+          <PlanPage items={unresolved} projects={data.projects} capture={capture} setCapture={setCapture} onAddThought={addThought} onSaveItem={updateItemSilently} onDeleteItem={deleteItem} onCreateProject={createProject} onAddChild={addSplitItem} />
+          {ideaItems.length > 0 && <section className="card" style={{ marginTop: 18 }}><details><summary className="section-label">Idea log · {ideaItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Fleeting ideas, not tasks - no schedule, no estimate. Tap Edit to change the wording or drop one back to a task.</p><div style={{ marginTop: 12 }}><OrganizableList items={ideaItems} action="Edit" projects={data.projects} onSaveItem={saveItem} onDeleteItem={deleteItem} onSplitItem={(item) => setSplitting(item)} onCreateProject={createProject} /></div></details></section>}
+          {archivedItems.length > 0 && <section className="card" style={{ marginTop: 18 }}><details><summary className="section-label">Archive · {archivedItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Original braindumps you have fully split into separate items. Kept out of the way, not deleted.</p><div style={{ marginTop: 12 }}><OrganizableList items={archivedItems} action="View" projects={data.projects} onSaveItem={saveItem} onDeleteItem={deleteItem} onSplitItem={(item) => setSplitting(item)} onCreateProject={createProject} /></div></details></section>}
+        </>}
         {tab === "week" && <PlanTab weekItems={weekItems} laterItems={laterItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} projects={data.projects} onSaveTargets={saveTargets} onOpen={(item) => setSelected(item)} onDone={toggleDone} committedItems={committedItems} />}
         {tab === "reflections" && <ReflectionPanel doneToday={doneToday} doneThisWeek={doneThisWeek} unfinishedThisWeek={unfinishedThisWeek} openItems={openItems} allItems={data.items} projects={data.projects} reflections={data.reflections} onOpen={(item) => setSelected(item)} onDrop={deleteItem} onReplace={replaceItem} onDone={toggleDone} onSave={saveReflection} />}
 
@@ -394,7 +370,6 @@ export default function Home() {
         {markingDone && <DoneModal item={markingDone} onConfirm={(minutes) => confirmDone(markingDone.id, minutes)} onSkip={() => confirmDone(markingDone.id, undefined)} />}
         {splitting && <SplitPanel item={splitting} children={data.items.filter((item) => item.splitFrom === splitting.id)} onAddChild={(text, type) => addSplitItem(splitting.id, text, type)} onClose={() => setSplitting(null)} />}
         {duplicate && <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="duplicate-title"><div className="section-label">Possible duplicate</div><h2 id="duplicate-title">You already have a note like this.</h2><p className="empty">Keep it anyway, or cancel and continue with the existing note.</p><div className="actions"><button className="ghost" onClick={() => setDuplicate(null)}>Cancel</button><button className="primary" onClick={keepDuplicate}>Keep both</button></div></div></div>}
-        {summaryOpen && <SummaryModal items={unresolved} onClose={() => setSummaryOpen(false)} />}
         {toast && <div className="toast" role="status">{toast}</div>}
       </div>
     </main>
@@ -431,40 +406,6 @@ function OrganizableList({ items, action, projects, onDone, footer, onSaveItem, 
   })}</div>;
 }
 
-function Inbox({ items, allItems, ideaItems, archivedItems, projects, onSaveItem, onDeleteItem, onSplit, onArchive, onOpenProject, onCreateProject, onDone, onQuickCommit, onSummary }: { items: Item[]; allItems: Item[]; ideaItems: Item[]; archivedItems: Item[]; projects: Project[]; onSaveItem: (item: Item) => void; onDeleteItem: (id: string) => void; onSplit: (item: Item) => void; onArchive: (id: string) => void; onOpenProject: (project: Project) => void; onCreateProject: (project: Project) => void; onDone: (item: Item) => void; onQuickCommit: (id: string, bucket: Bucket) => void; onSummary: () => void }) {
-  const [newProjectName, setNewProjectName] = useState("");
-
-  function createProject() {
-    const name = newProjectName.trim();
-    if (!name) return;
-    const now = new Date().toISOString();
-    onCreateProject({ id: makeId(), name, done: false, createdAt: now, updatedAt: now });
-    setNewProjectName("");
-  }
-
-  return <div className="stack"><section className="card"><div className="card-header"><div><div className="section-label">Inbox</div><h2>Decide when you have space.</h2></div><button className="ghost small-button" onClick={onSummary} disabled={!items.length}>Summarize unresolved</button></div>{items.length ? <OrganizableList items={sortDoneLast(items)} action="Organize" projects={projects} onDone={onDone} onSaveItem={onSaveItem} onDeleteItem={onDeleteItem} onSplitItem={onSplit} onCreateProject={onCreateProject} footer={(item) => {
-    const childCount = allItems.filter((candidate) => candidate.splitFrom === item.id).length;
-    return <div className="row-footer">
-      {buckets.map((bucket) => <button type="button" className="ghost small-button" key={bucket} onClick={() => onQuickCommit(item.id, bucket)}>{bucket}</button>)}
-      {childCount > 0 && <span className="hint">⤷ {childCount} item{childCount === 1 ? "" : "s"} split out</span>}
-      {childCount > 0 && <button className="ghost small-button" onClick={() => onArchive(item.id)}>Nothing left in this note</button>}
-    </div>;
-  }} /> : <p className="empty">Nothing waiting here. Add a thought whenever one arrives.</p>}</section>
-
-    <section className="card">
-      <div className="card-header"><div><div className="section-label">Projects</div><h2>{projects.length} project{projects.length === 1 ? "" : "s"}</h2></div></div>
-      {projects.length ? <div className="item-list">{sortProjectsDoneLast(projects).map((project) => {
-        const subtaskCount = allItems.filter((item) => item.projectId === project.id).length;
-        return <div className="item-row" key={project.id}><div className="item-main"><div className="item-text">{project.name}</div><div className="item-meta"><span className="tag">{subtaskCount} subtask{subtaskCount === 1 ? "" : "s"}</span>{project.done && <span className="tag accent">Done</span>}</div></div><button className="ghost small-button" onClick={() => onOpenProject(project)}>Open</button></div>;
-      })}</div> : <p className="empty">No projects yet. Create one below, then attach tasks to it from Organize.</p>}
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder="New project name…" style={{ flex: 1 }} onKeyDown={(event) => { if (event.key === "Enter") createProject(); }} />
-        <button className="ghost small-button" onClick={createProject}>+ New project</button>
-      </div>
-    </section>
-
-    {ideaItems.length > 0 && <section className="card"><details><summary className="section-label">Idea log · {ideaItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Fleeting ideas, not tasks - no schedule, no estimate. Tap Edit to change the wording or drop one back to a task.</p><div style={{ marginTop: 12 }}><OrganizableList items={ideaItems} action="Edit" projects={projects} onSaveItem={onSaveItem} onDeleteItem={onDeleteItem} onSplitItem={onSplit} onCreateProject={onCreateProject} /></div></details></section>}{archivedItems.length > 0 && <section className="card"><details><summary className="section-label">Archive · {archivedItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Original braindumps you have fully split into separate items. Kept out of the way, not deleted.</p><div style={{ marginTop: 12 }}><OrganizableList items={archivedItems} action="View" projects={projects} onSaveItem={onSaveItem} onDeleteItem={onDeleteItem} onSplitItem={onSplit} onCreateProject={onCreateProject} /></div></details></section>}</div>;
-}
 
 function SplitPanel({ item, children, onAddChild, onClose }: { item: Item; children: Item[]; onAddChild: (text: string, type: ItemType) => void; onClose: () => void }) {
   // Recomputed only when the note's text changes - segmentText is a pure
@@ -976,4 +917,3 @@ function ReplacePanel({ original, allItems, onChoose, onJustDrop, onClose }: { o
   </div></div>;
 }
 
-function SummaryModal({ items, onClose }: { items: Item[]; onClose: () => void }) { return <div className="modal-backdrop"><div className="modal card" role="dialog" aria-modal="true" aria-labelledby="summary-title"><div className="card-header"><div><div className="section-label">Manual summary</div><h2 id="summary-title">What is still asking for attention?</h2></div><button className="ghost small-button" onClick={onClose}>Close</button></div><p className="empty">This is only a quick scan. Nothing is categorized or scheduled by this summary.</p><div className="item-list" style={{ marginTop: 14 }}>{items.map((item) => <div className="item-row" key={item.id}><div className="item-main"><div className="item-text">{item.text}</div><div className="item-meta"><span className="tag">Inbox</span></div></div></div>)}</div></div></div>; }
