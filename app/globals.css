@@ -210,3 +210,10 @@ details[open] > summary::before { content: "▾ "; }
   .month-cell-count { font-size: 8px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+
+/* Desktop dashboard: Plan + every Overview section on one screen, grouped
+   into 3-column rows instead of one long single-column scroll. */
+.dashboard-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; }
+@media (max-width: 1180px) {
+  .dashboard-columns { grid-template-columns: 1fr; }
+}
