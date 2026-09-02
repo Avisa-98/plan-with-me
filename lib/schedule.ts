@@ -61,3 +61,18 @@ export function startOfMonth(date: Date): Date {
 export function daysInMonth(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
 }
+
+export function weekDays(start: Date): Date[] {
+  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
+}
+
+// Monday-first calendar grid for a given month: leading `null` cells for the
+// days before the 1st that belong to the previous month, then one Date per
+// day of the month. Shared by the "This Month" bucket-date picker and the
+// Overview Month view, so both render the exact same layout.
+export function monthGridCells(month: Date): (Date | null)[] {
+  const first = startOfMonth(month);
+  const total = daysInMonth(month);
+  const leadingBlanks = first.getDay() === 0 ? 6 : first.getDay() - 1;
+  return [...Array(leadingBlanks).fill(null), ...Array.from({ length: total }, (_, index) => addDays(first, index))];
+}

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Item } from "./storage.ts";
-import { toDateKey, itemDateKey, itemsOnDate, unscheduledItems, startOfWeek, addDays, startOfMonth, daysInMonth } from "./schedule.ts";
+import { toDateKey, itemDateKey, itemsOnDate, unscheduledItems, startOfWeek, addDays, startOfMonth, daysInMonth, weekDays, monthGridCells } from "./schedule.ts";
 
 function item(over: Partial<Item> = {}): Item {
   const now = new Date().toISOString();
@@ -67,4 +67,26 @@ test("daysInMonth handles a non-leap-year February", () => {
 
 test("daysInMonth handles a 31-day month", () => {
   assert.equal(daysInMonth(new Date(2026, 0, 1)), 31);
+});
+
+test("weekDays returns 7 consecutive days starting at the given date", () => {
+  const start = new Date(2026, 8, 7); // Mon Sep 7 2026
+  const days = weekDays(start);
+  assert.equal(days.length, 7);
+  assert.equal(toDateKey(days[0]), "2026-09-07");
+  assert.equal(toDateKey(days[6]), "2026-09-13");
+});
+
+test("monthGridCells pads leading blanks so the grid starts on Monday", () => {
+  // September 2026 starts on a Tuesday, so exactly 1 leading blank.
+  const cells = monthGridCells(new Date(2026, 8, 1));
+  assert.equal(cells[0], null);
+  assert.equal(cells[1] !== null && toDateKey(cells[1]), "2026-09-01");
+  assert.equal(cells.length, 1 + 30); // 1 leading blank + 30 days in September
+});
+
+test("monthGridCells has no leading blanks when the 1st is already a Monday", () => {
+  // June 2026 starts on a Monday.
+  const cells = monthGridCells(new Date(2026, 5, 1));
+  assert.equal(cells[0] !== null && toDateKey(cells[0]), "2026-06-01");
 });
