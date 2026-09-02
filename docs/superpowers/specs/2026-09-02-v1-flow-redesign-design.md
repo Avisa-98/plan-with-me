@@ -107,6 +107,30 @@ into the monthly Reflect flow — implementation detail, decide during
 planning) calling out Later items that still have no date, so they don't
 get silently forgotten. This is a passive callout, not a blocking modal.
 
+## Responsive layout: mobile vs. desktop
+
+Mobile keeps the 2-tab nav described above (Plan / Overview, with
+Overview's five views reached by the segmented toggle) — small screens
+still benefit from one thing at a time.
+
+Desktop/web has real estate to spare, so instead of tab-clicking, it
+collapses Plan and Overview into **one dashboard, all on one screen**,
+laid out as a linear grid of boxes sized to their content (minimal
+scrolling):
+
+- **Row 1:** Capture box + the organize list, full width — still the main
+  job, so it gets the most prominent spot.
+- **Row 2:** Today · Week · Month, three columns.
+- **Row 3:** Projects · Saved for Later · Reflect, three columns — Reflect
+  shown as a small summary card (streak, last entry) that opens the full
+  reflect flow in a focused overlay when clicked, since it's a slower
+  session, not a glance.
+
+This is the first pass — a non-linear "bento box" layout (boxes of
+different sizes fitted together rather than uniform rows/columns) was
+raised as a future direction but explicitly deferred; revisit once the
+flow itself is validated.
+
 ## Data model changes
 
 - `Category`: `"Work" | "Family" | "Friends" | "Health" | "Personal"` →
@@ -140,3 +164,7 @@ get silently forgotten. This is a passive callout, not a blocking modal.
   project "more" affordance.
 - Whether Week/Month/Projects views need their own "done" list styling or
   can reuse the existing Today/Reflect done-list pattern as-is.
+- Exact breakpoint where the layout switches from mobile tabs to the
+  desktop dashboard (the app already has a device-detection pattern from
+  the existing mobile-install banner — reuse that threshold unless it
+  proves wrong in testing).
