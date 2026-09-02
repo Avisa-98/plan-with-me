@@ -38,6 +38,23 @@ export function ItemRow({ item, projects, onOpen, action, footer, onDone }: { it
   </div>;
 }
 
+// A list of items where the done ones don't clutter the main view - they
+// strike through and tuck under a collapsed "Completed" dropdown instead of
+// sitting inline in the same list. Still reachable (tap to expand, undo
+// still works), just out of the way by default.
+export function ItemListWithDone({ items, projects, onOpen, onDone, action, empty }: { items: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void; action: string; empty: string }) {
+  if (!items.length) return <p className="empty">{empty}</p>;
+  const open = items.filter((item) => !item.done);
+  const done = items.filter((item) => item.done);
+  return <>
+    {open.length > 0 && <div className="item-list">{open.map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action={action} onDone={onDone} />)}</div>}
+    {done.length > 0 && <details style={{ marginTop: open.length ? 10 : 0 }}>
+      <summary className="section-label">Completed · {done.length}</summary>
+      <div className="item-list" style={{ marginTop: 10 }}>{done.map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action={action} onDone={onDone} />)}</div>
+    </details>}
+  </>;
+}
+
 export function DoneModal({ item, onConfirm, onSkip }: { item: Item; onConfirm: (minutes: number | undefined) => void; onSkip: () => void }) {
   const [hours, setHours] = useState("");
   const [minutes, setMinutes] = useState("");
