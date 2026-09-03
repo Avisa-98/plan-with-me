@@ -239,7 +239,7 @@ export default function Home() {
   </>;
 
   const overviewProps = {
-    todayItems, thisWeekItems, weekItems, weekMinutes, categoryTotals, largestCategory,
+    todayItems, thisWeekItems, weekMinutes, categoryTotals, largestCategory,
     categoryConflicts, targets, onSaveTargets: saveTargets, committedItems, laterItems,
     onOpen: (item: Item) => setSelected(item), onDone: toggleDone,
   };

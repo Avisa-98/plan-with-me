@@ -44,8 +44,8 @@ function TodayView({ todayItems, thisWeekItems, onOpen, onDone }: { todayItems: 
       <div style={{ marginTop: 8 }}><OpenItemsList items={todayOpen} onOpen={onOpen} onDone={onDone} empty="Organize a note from Plan and choose Today to see it here." /></div>
     </div>
     <div className="field full" style={{ marginTop: 18 }}>
-      <label>This week, not on a specific day ({thisWeekOpen.length})</label>
-      <div style={{ marginTop: 8 }}><OpenItemsList items={thisWeekOpen} onOpen={onOpen} onDone={onDone} empty="Nothing else queued for this week." /></div>
+      <label>This week ({thisWeekOpen.length})</label>
+      <div style={{ marginTop: 8 }}><ScheduleList items={thisWeekOpen} onOpen={onOpen} onDone={onDone} empty="Nothing else queued for this week." /></div>
     </div>
     <details className="completed-details" style={{ marginTop: 18 }}>
       <summary className="section-label tiny">Completed · {done.length}</summary>
@@ -84,7 +84,7 @@ function FeedCard({ weekItems, laterItems, onOpen, onDone }: { weekItems: Item[]
 // Combines the old category/targets breakdown with the day-by-day grid -
 // two lenses on the same week, stacked instead of behind their own toggle,
 // since Overview's only toggle now is Today/Week/Month.
-function WeekSection({ weekItems, weekMinutes, categoryTotals, largestCategory, conflicts, targets, onSaveTargets, committedItems, laterItems, onOpen, onDone }: { weekItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; onSaveTargets: (targets: Targets) => void; committedItems: Item[]; laterItems: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+function WeekSection({ weekMinutes, categoryTotals, largestCategory, conflicts, targets, onSaveTargets, committedItems, laterItems, onOpen, onDone }: { weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; onSaveTargets: (targets: Targets) => void; committedItems: Item[]; laterItems: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
   const [draftTargets, setDraftTargets] = useState<Targets>(targets);
   const targetsAlreadySet = Object.values(targets).some((value) => value !== undefined);
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
@@ -93,6 +93,19 @@ function WeekSection({ weekItems, weekMinutes, categoryTotals, largestCategory, 
   const weekRange = `${weekStartDisplay.toLocaleDateString(undefined, { month: "long", day: "numeric" })} – ${weekEnd.toLocaleDateString(undefined, { month: "long", day: "numeric" })}`;
   const days = weekDays(weekStart);
   const rangeLabel = `${weekStart.toLocaleDateString(undefined, { month: "long", day: "numeric" })} – ${addDays(weekStart, 6).toLocaleDateString(undefined, { month: "long", day: "numeric" })}`;
+
+  // The grid above shows anything with a date this week, regardless of
+  // bucket - Feed needs the same scope, or an item scheduled here (say,
+  // committed to This Month but dated into this week) would show in the
+  // grid and then vanish from the list right below it. Later items are
+  // excluded even if dated this week - they already have their own
+  // section, so they'd otherwise show twice.
+  const weekDayKeys = new Set(days.map(toDateKey));
+  const feedItems = committedItems.filter((item) => {
+    if (item.bucket === "Later") return false;
+    const key = itemDateKey(item);
+    return key ? weekDayKeys.has(key) : item.bucket === "Today" || item.bucket === "This Week";
+  });
 
   return <div className="stack">
     <section className="card">
@@ -120,7 +133,7 @@ function WeekSection({ weekItems, weekMinutes, categoryTotals, largestCategory, 
       })}</div>
     </section>
 
-    <FeedCard weekItems={weekItems} laterItems={laterItems} onOpen={onOpen} onDone={onDone} />
+    <FeedCard weekItems={feedItems} laterItems={laterItems} onOpen={onOpen} onDone={onDone} />
 
     <details className="card" style={{ padding: "12px 17px" }} open={targetsAlreadySet}>
       <summary className="section-label">Weekly targets (optional)</summary>
@@ -184,10 +197,9 @@ function MonthSection({ month, setMonth, items, unscheduled, staleLater, onOpen,
 const OVERVIEW_MODES = [["today", "Today"], ["week", "Week"], ["month", "Month"]] as const;
 type OverviewMode = (typeof OVERVIEW_MODES)[number][0];
 
-export function OverviewPage({ todayItems, thisWeekItems, weekItems, weekMinutes, categoryTotals, largestCategory, categoryConflicts, targets, onSaveTargets, committedItems, laterItems, onOpen, onDone }: {
+export function OverviewPage({ todayItems, thisWeekItems, weekMinutes, categoryTotals, largestCategory, categoryConflicts, targets, onSaveTargets, committedItems, laterItems, onOpen, onDone }: {
   todayItems: Item[];
   thisWeekItems: Item[];
-  weekItems: Item[];
   weekMinutes: number;
   categoryTotals: { category: Category; minutes: number }[];
   largestCategory: number;
@@ -206,7 +218,7 @@ export function OverviewPage({ todayItems, thisWeekItems, weekItems, weekMinutes
 
   const sections: Record<OverviewMode, React.ReactNode> = {
     today: <TodayView todayItems={todayItems} thisWeekItems={thisWeekItems} onOpen={onOpen} onDone={onDone} />,
-    week: <WeekSection weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} onSaveTargets={onSaveTargets} committedItems={committedItems} laterItems={laterItems} onOpen={onOpen} onDone={onDone} />,
+    week: <WeekSection weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} onSaveTargets={onSaveTargets} committedItems={committedItems} laterItems={laterItems} onOpen={onOpen} onDone={onDone} />,
     month: <MonthSection month={month} setMonth={setMonth} items={committedItems} unscheduled={unscheduled} staleLater={staleLater} onOpen={onOpen} onDone={onDone} />,
   };
 
