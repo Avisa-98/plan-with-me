@@ -6,7 +6,7 @@ import { makeId } from "../../lib/storage";
 import { addDays, itemDateKey, itemsOnDate, monthGridCells, startOfMonth, startOfWeek, toDateKey, unscheduledItems, weekDays } from "../../lib/schedule";
 import { effectiveCategory, sortProjectsDoneLast } from "../../lib/projects";
 import { rankReplacementCandidates } from "../../lib/reflect";
-import { formatMinutes, estimateTag, ItemListWithDone } from "./shared";
+import { formatMinutes, estimateTag, ItemRow } from "./shared";
 
 const OVERVIEW_CATEGORIES: Category[] = ["Work", "Social", "Personal"];
 
@@ -14,16 +14,65 @@ const OVERVIEW_CATEGORIES: Category[] = ["Work", "Social", "Personal"];
 // open for the week" used to be two separate cards for no real reason,
 // both are just "what's on deck," not different kinds of thing.
 function TodayView({ todayItems, thisWeekItems, projects, onOpen, onDone }: { todayItems: Item[]; thisWeekItems: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+  const todayOpen = todayItems.filter((item) => !item.done);
+  const thisWeekOpen = thisWeekItems.filter((item) => !item.done);
+  const done = [...todayItems, ...thisWeekItems].filter((item) => item.done);
+
   return <section className="card">
-    <div className="card-header"><div><div className="section-label">Today</div><h2>{todayItems.length ? `${todayItems.length} thing${todayItems.length === 1 ? "" : "s"} today` : "Nothing committed to today yet"}</h2></div></div>
+    <div className="card-header"><div><div className="section-label">Today</div><h2>{todayOpen.length ? `${todayOpen.length} thing${todayOpen.length === 1 ? "" : "s"} today` : "Nothing committed to today yet"}</h2></div></div>
     <div className="field full">
-      <label>Today ({todayItems.length})</label>
-      <div style={{ marginTop: 8 }}><ItemListWithDone items={todayItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Organize a note from Plan and choose Today to see it here." /></div>
+      <label>Today ({todayOpen.length})</label>
+      <div style={{ marginTop: 8 }}><OpenItemsList items={todayOpen} projects={projects} onOpen={onOpen} onDone={onDone} empty="Organize a note from Plan and choose Today to see it here." /></div>
     </div>
     <div className="field full" style={{ marginTop: 18 }}>
-      <label>This week, not on a specific day ({thisWeekItems.length})</label>
-      <div style={{ marginTop: 8 }}><ItemListWithDone items={thisWeekItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Nothing else queued for this week." /></div>
+      <label>This week, not on a specific day ({thisWeekOpen.length})</label>
+      <div style={{ marginTop: 8 }}><OpenItemsList items={thisWeekOpen} projects={projects} onOpen={onOpen} onDone={onDone} empty="Nothing else queued for this week." /></div>
     </div>
+    <details style={{ marginTop: 18 }}>
+      <summary className="section-label">Completed · {done.length}</summary>
+      {done.length > 0 && <div className="item-list" style={{ marginTop: 10 }}>{done.map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div>}
+    </details>
+  </section>;
+}
+
+// Plain open-items list, no per-list "Completed" dropdown of its own -
+// FeedCard below rolls every segment's done items into one combined
+// dropdown at the bottom instead.
+function OpenItemsList({ items, projects, onOpen, onDone, empty }: { items: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void; empty: string }) {
+  if (!items.length) return <p className="empty">{empty}</p>;
+  return <div className="item-list">{items.map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div>;
+}
+
+// This week's committed items, whatever's committed but not pinned to a
+// day, and Later's parked items - all in one place. Items here are always
+// already organised (they have a bucket); "unscheduled" just means no
+// exact date yet, which is a normal, fine state, not a problem to fix.
+// Truly un-organised items (still sitting in Inbox) never show up here at
+// all - that's Plan's job, not Overview's.
+function FeedCard({ weekItems, unscheduled, laterItems, projects, onOpen, onDone }: { weekItems: Item[]; unscheduled: Item[]; laterItems: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+  const weekOpen = weekItems.filter((item) => !item.done);
+  const unscheduledOpen = unscheduled.filter((item) => !item.done);
+  const laterOpen = laterItems.filter((item) => !item.done);
+  const done = [...weekItems, ...unscheduled, ...laterItems].filter((item) => item.done);
+
+  return <section className="card">
+    <div className="card-header"><div className="section-label">Feed</div></div>
+    <div className="field full">
+      <label>This week ({weekOpen.length})</label>
+      <div style={{ marginTop: 8 }}><OpenItemsList items={weekOpen} projects={projects} onOpen={onOpen} onDone={onDone} empty="Organize an item and choose Today or This Week to see it here." /></div>
+    </div>
+    <div className="field full" style={{ marginTop: 18 }}>
+      <label>Unscheduled ({unscheduledOpen.length})</label>
+      <div style={{ marginTop: 8 }}><OpenItemsList items={unscheduledOpen} projects={projects} onOpen={onOpen} onDone={onDone} empty="Everything committed has a day, or nothing is committed yet." /></div>
+    </div>
+    <details style={{ marginTop: 18 }}>
+      <summary className="section-label">Saved for later · {laterOpen.length}</summary>
+      <div style={{ marginTop: 10 }}><OpenItemsList items={laterOpen} projects={projects} onOpen={onOpen} onDone={onDone} empty="Nothing parked right now." /></div>
+    </details>
+    <details style={{ marginTop: 18 }}>
+      <summary className="section-label">Completed · {done.length}</summary>
+      {done.length > 0 && <div className="item-list" style={{ marginTop: 10 }}>{done.map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div>}
+    </details>
   </section>;
 }
 
@@ -67,24 +116,7 @@ function WeekSection({ weekItems, weekMinutes, categoryTotals, largestCategory, 
       })}</div>
     </section>
 
-    <section className="card">
-      <div className="card-header"><div><div className="section-label">Feed</div><h2>Everything not locked to a day yet.</h2></div></div>
-      <div className="field full">
-        <label>Yet to organise ({weekItems.length})</label>
-        <div style={{ marginTop: 8 }}><ItemListWithDone items={weekItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Organize an item and choose Today or This Week to see it here." /></div>
-      </div>
-      <div className="field full" style={{ marginTop: 18 }}>
-        <label>Unscheduled ({unscheduled.length})</label>
-        <div style={{ marginTop: 8 }}><ItemListWithDone items={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Everything committed has a day, or nothing is committed yet." /></div>
-      </div>
-      {/* Same collapsed-by-default details/summary pattern ItemListWithDone
-          already uses for "Completed" - Later items stay out of the way
-          until you actually want to look at them, not shown by default. */}
-      <details style={{ marginTop: 18 }}>
-        <summary className="section-label">Saved for later · {laterItems.length}</summary>
-        <div style={{ marginTop: 10 }}><ItemListWithDone items={laterItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Nothing parked right now." /></div>
-      </details>
-    </section>
+    <FeedCard weekItems={weekItems} unscheduled={unscheduled} laterItems={laterItems} projects={projects} onOpen={onOpen} onDone={onDone} />
 
     <details className="card" style={{ padding: "12px 17px" }} open={targetsAlreadySet}>
       <summary className="section-label">Weekly targets (optional)</summary>
@@ -104,6 +136,9 @@ function MonthSection({ month, setMonth, items, unscheduled, projects, staleLate
   const [pickedDay, setPickedDay] = useState<Date | null>(null);
   const cells = monthGridCells(month);
   const pickedDayItems = pickedDay ? itemsOnDate(items, toDateKey(pickedDay)) : [];
+  const pickedDayOpen = pickedDayItems.filter((item) => !item.done);
+  const unscheduledOpen = unscheduled.filter((item) => !item.done);
+  const done = [...pickedDayItems, ...unscheduled].filter((item) => item.done);
 
   return <section className="card">
     <div className="card-header">
@@ -129,12 +164,16 @@ function MonthSection({ month, setMonth, items, unscheduled, projects, staleLate
     {staleLater.length > 0 && <div className="notice" style={{ marginTop: 14 }}>{staleLater.length} "Later" item{staleLater.length === 1 ? " has" : "s have"} no date yet. Check Week's Saved for later to give them one, or leave them parked.</div>}
     {pickedDay && <div className="field full" style={{ marginTop: 18 }}>
       <label>{pickedDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</label>
-      <div style={{ marginTop: 8 }}><ItemListWithDone items={pickedDayItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Nothing scheduled for this day." /></div>
+      <div style={{ marginTop: 8 }}><OpenItemsList items={pickedDayOpen} projects={projects} onOpen={onOpen} onDone={onDone} empty="Nothing scheduled for this day." /></div>
     </div>}
     <div className="field full" style={{ marginTop: 18 }}>
-      <label>Unscheduled ({unscheduled.length})</label>
-      <div style={{ marginTop: 8 }}><ItemListWithDone items={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Everything committed has a day, or nothing is committed yet. Add a due date in Plan to put an item on the calendar." /></div>
+      <label>Unscheduled ({unscheduledOpen.length})</label>
+      <div style={{ marginTop: 8 }}><OpenItemsList items={unscheduledOpen} projects={projects} onOpen={onOpen} onDone={onDone} empty="Everything committed has a day, or nothing is committed yet. Add a due date in Plan to put an item on the calendar." /></div>
     </div>
+    <details style={{ marginTop: 18 }}>
+      <summary className="section-label">Completed · {done.length}</summary>
+      {done.length > 0 && <div className="item-list" style={{ marginTop: 10 }}>{done.map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action="Edit" onDone={onDone} />)}</div>}
+    </details>
   </section>;
 }
 
