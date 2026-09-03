@@ -103,7 +103,7 @@ export function exportData(data: StoredData): string {
 
 // Same "fill in missing fields, keep everything else" rule loadData uses -
 // one place decides what a valid StoredData looks like. Returns null for
-// anything that clearly isn't a Plan With Me backup, so the caller can show
+// anything that clearly isn't a Bunko backup, so the caller can show
 // a plain error instead of silently wiping the current plan.
 export function parseImport(raw: string): StoredData | null {
   try {

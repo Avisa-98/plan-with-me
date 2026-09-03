@@ -37,7 +37,7 @@ function bucketSection(title: string, items: Item[], bucket: Bucket | undefined)
 }
 
 export function exportMarkdown(data: StoredData): string {
-  const sections: string[] = [`# Plan With Me — Backup\nExported ${new Date().toLocaleDateString()}`];
+  const sections: string[] = [`# Bunko — Backup\nExported ${new Date().toLocaleDateString()}`];
 
   const ideas = data.items.filter(isIdea);
   if (ideas.length > 0) {

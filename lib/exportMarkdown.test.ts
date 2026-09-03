@@ -69,5 +69,5 @@ test("completely empty data produces a readable file, not a crash or a blank str
   const md = exportMarkdown(data());
   assert.equal(typeof md, "string");
   assert.ok(md.length > 0);
-  assert.match(md, /Plan With Me/);
+  assert.match(md, /Bunko/);
 });

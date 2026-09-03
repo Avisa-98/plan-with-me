@@ -3,7 +3,7 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Plan With Me",
+  title: "Bunko",
   description: "A calmer place for everything you are carrying.",
   manifest: "/manifest.webmanifest",
   // Saved to the home screen, this makes it open full-screen with its own
@@ -11,12 +11,12 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Plan With Me",
+    title: "Bunko",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#282722",
+  themeColor: "#2b2420",
 };
 
 // Runs before the page paints, so the theme is right on the very first

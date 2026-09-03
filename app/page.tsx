@@ -95,7 +95,7 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `plan-with-me-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = `bunko-backup-${new Date().toISOString().slice(0, 10)}.json`;
     link.click();
     URL.revokeObjectURL(url);
     showToast("Backup downloaded.");
@@ -109,7 +109,7 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `plan-with-me-backup-${new Date().toISOString().slice(0, 10)}.md`;
+    link.download = `bunko-backup-${new Date().toISOString().slice(0, 10)}.md`;
     link.click();
     URL.revokeObjectURL(url);
     showToast("Markdown copy downloaded.");
@@ -120,7 +120,7 @@ export default function Home() {
     reader.onload = () => {
       const parsed = parseImport(String(reader.result ?? ""));
       if (!parsed) {
-        showToast("That file doesn't look like a Plan With Me backup.");
+        showToast("That file doesn't look like a Bunko backup.");
         return;
       }
       setData(parsed);
@@ -256,11 +256,11 @@ export default function Home() {
             instead. */}
         {data.items.length === 0 ? (
           <header className="topbar">
-            <div><div className="eyebrow">Plan With Me · v1</div><h1>Capture the thought. Plan the week. No login.</h1></div>
+            <div><div className="eyebrow">Bunko · v1</div><h1>Capture the thought. Plan the week. No login.</h1></div>
             <p className="top-note">For anyone whose day gets pulled in five directions. Jot down what's on your mind in seconds, then turn it into a real plan when you have a minute.</p>
           </header>
         ) : (
-          <header className="topbar-compact"><span className="eyebrow">Plan With Me</span></header>
+          <header className="topbar-compact"><span className="eyebrow">Bunko</span></header>
         )}
         <nav className="nav" aria-label="Primary navigation">
           {nav.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</button>)}
