@@ -22,7 +22,6 @@ export type Item = {
   done?: boolean;
   actualMinutes?: number;
   splitFrom?: string;
-  archived?: boolean;
   createdAt: string;
   updatedAt: string;
 };

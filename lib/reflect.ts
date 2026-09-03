@@ -32,13 +32,13 @@ export function isDoneThisWeek(item: Item, now: Date) {
 export type RankedCandidate = { item: Item; longer: boolean };
 
 // Candidates for swapping in when you Replace an item: anything else that's
-// still open (not done, not archived) and already has a time estimate -
-// without an estimate there is nothing to compare against the item you're
-// dropping, so it can't be ranked as "fits" or "takes longer."
+// still open (not done) and already has a time estimate - without an
+// estimate there is nothing to compare against the item you're dropping,
+// so it can't be ranked as "fits" or "takes longer."
 export function rankReplacementCandidates(original: Item, pool: Item[]): RankedCandidate[] {
   const originalEstimate = original.estimateMinutes ?? 0;
   return pool
-    .filter((candidate) => candidate.id !== original.id && !candidate.done && !candidate.archived && candidate.estimateMinutes != null)
+    .filter((candidate) => candidate.id !== original.id && !candidate.done && candidate.estimateMinutes != null)
     .map((item) => ({ item, longer: (item.estimateMinutes ?? 0) > originalEstimate }))
     .sort((a, b) => (a.item.estimateMinutes ?? 0) - (b.item.estimateMinutes ?? 0));
 }

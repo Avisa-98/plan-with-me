@@ -1,5 +1,5 @@
 import type { Bucket, Item, Project, StoredData } from "./storage";
-import { isArchived, isIdea, isLater, isUnresolved, isWeekItem } from "./views.ts";
+import { isIdea, isLater, isUnresolved, isWeekItem } from "./views.ts";
 import { effectiveCategory } from "./projects.ts";
 
 /**
@@ -54,11 +54,6 @@ export function exportMarkdown(data: StoredData): string {
   const inbox = data.items.filter(isUnresolved);
   if (inbox.length > 0) {
     sections.push(`## Inbox\n${inbox.map((item) => `- ${item.text}`).join("\n")}`);
-  }
-
-  const archived = data.items.filter(isArchived);
-  if (archived.length > 0) {
-    sections.push(`## Archive\n${archived.map((item) => `- ${item.text}`).join("\n")}`);
   }
 
   if (data.reflections.length > 0) {

@@ -78,11 +78,6 @@ test("an empty section produces no heading at all - no blank ## Later with nothi
   assert.doesNotMatch(md, /## Idea Log/);
 });
 
-test("an archived braindump is listed under Archive", () => {
-  const md = exportMarkdown(data([item({ text: "old braindump", archived: true })]));
-  assert.match(md, /## Archive[\s\S]*- old braindump/);
-});
-
 test("a reflection appears under Reflections with its date", () => {
   const md = exportMarkdown(data([], [{ id: "r", type: "daily", text: "good day", createdAt: "2026-08-30T10:00:00.000Z" }]));
   assert.match(md, /## Reflections/);

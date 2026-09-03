@@ -53,13 +53,12 @@ test("an item that is not done does not count as done this week", () => {
   assert.equal(isDoneThisWeek(notDone, now), false);
 });
 
-test("replacement candidates exclude the item itself, done items, archived items, and items with no estimate", () => {
+test("replacement candidates exclude the item itself, done items, and items with no estimate", () => {
   const original = item({ id: "orig", estimateMinutes: 60 });
   const pool = [
     original,
     item({ id: "no-estimate" }),
     item({ id: "done", estimateMinutes: 30, done: true }),
-    item({ id: "archived", estimateMinutes: 30, archived: true }),
     item({ id: "keeper-a", estimateMinutes: 30 }),
     item({ id: "keeper-b", estimateMinutes: 90 }),
   ];

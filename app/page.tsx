@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bucket, Category, Item, ItemType, Project, Reflection, StoredData, Targets, emptyData, exportData, loadData, makeId, parseImport, saveData } from "../lib/storage";
 import { exportMarkdown } from "../lib/exportMarkdown";
-import { isArchived, isIdea, isLater, isUnresolved, isWeekItem, sortDoneLast } from "../lib/views";
+import { isIdea, isLater, isUnresolved, isWeekItem, sortDoneLast } from "../lib/views";
 import { joinSelected, segmentText } from "../lib/split";
 import { isDoneToday, isDoneThisWeek } from "../lib/reflect";
 import { effectiveCategory, sortProjectsDoneLast, subtaskTotalMinutes, subtasksOf } from "../lib/projects";
@@ -72,16 +72,15 @@ export default function Home() {
   const todayItems = weekItems.filter((item) => item.bucket === "Today");
   const thisWeekItems = weekItems.filter((item) => item.bucket === "This Week");
   const laterItems = data.items.filter(isLater);
-  const archivedItems = data.items.filter(isArchived);
   const ideaItems = data.items.filter(isIdea);
   const doneToday = data.items.filter((item) => isDoneToday(item, new Date()));
   const doneThisWeek = data.items.filter((item) => isDoneThisWeek(item, new Date()));
   const unfinishedThisWeek = weekItems.filter((item) => !item.done);
-  const openItems = data.items.filter((item) => !isArchived(item) && !item.done);
+  const openItems = data.items.filter((item) => !item.done);
   // Everything actually committed to a plan - the pool the Day/Week-by-day/
   // Month views draw from, since raw Inbox notes have nothing to put
   // on a calendar yet.
-  const committedItems = data.items.filter((item) => !isArchived(item) && item.status === "Planned");
+  const committedItems = data.items.filter((item) => item.status === "Planned");
   const weekMinutes = weekItems.reduce((sum, item) => sum + (item.estimateMinutes ?? 0), 0);
   const categoryTotals = categories.map((category) => ({
     category,
@@ -263,11 +262,6 @@ export default function Home() {
     commitNewItem(trimmed, parentId, type === "idea" ? "Added as a separate idea." : "Added as a separate item.", type);
   }
 
-  function archiveItem(id: string) {
-    updateData((current) => ({ ...current, items: current.items.map((item) => item.id === id ? { ...item, archived: true, updatedAt: new Date().toISOString() } : item) }));
-    showToast("Archived. It is out of your way, not deleted.");
-  }
-
   // Tapping Done on an already-done item un-marks it right away - no prompt
   // needed to take something back. Marking it done for the first time opens
   // the actual-time prompt instead of writing straight to storage.
@@ -328,7 +322,6 @@ export default function Home() {
   const planPageNode = <>
     <PlanPage items={unresolved} projects={data.projects} capture={capture} setCapture={setCapture} onAddThought={addThought} onSaveItem={updateItemSilently} onDeleteItem={deleteItem} onCreateProject={createProject} onAddChild={addSplitItem} />
     {ideaItems.length > 0 && <section className="card" style={{ marginTop: 18 }}><details><summary className="section-label">Idea log · {ideaItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Fleeting ideas, not tasks - no schedule, no estimate. Tap Edit to change the wording or drop one back to a task.</p><div style={{ marginTop: 12 }}><OrganizableList items={ideaItems} action="Edit" projects={data.projects} onSaveItem={saveItem} onDeleteItem={deleteItem} onSplitItem={(item) => setSplitting(item)} onCreateProject={createProject} /></div></details></section>}
-    {archivedItems.length > 0 && <section className="card" style={{ marginTop: 18 }}><details><summary className="section-label">Archive · {archivedItems.length}</summary><p className="hint" style={{ marginTop: 10 }}>Original braindumps you have fully split into separate items. Kept out of the way, not deleted.</p><div style={{ marginTop: 12 }}><OrganizableList items={archivedItems} action="View" projects={data.projects} onSaveItem={saveItem} onDeleteItem={deleteItem} onSplitItem={(item) => setSplitting(item)} onCreateProject={createProject} /></div></details></section>}
   </>;
 
   // Same reasoning - one prop object for both the mobile "Overview" tab and
