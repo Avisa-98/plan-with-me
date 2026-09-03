@@ -31,9 +31,9 @@ function UnscheduledCard({ items, projects, onOpen, onDone }: { items: Item[]; p
 // two lenses on the same week, stacked instead of behind their own toggle,
 // since Overview's only toggle now is the five Today/Week/Month/Projects/
 // Reflect stops, not a second layer underneath Week.
-function WeekSection({ weekItems, weekMinutes, categoryTotals, largestCategory, conflicts, targets, projects, onSaveTargets, committedItems, unscheduled, onOpen, onDone }: { weekItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; projects: Project[]; onSaveTargets: (targets: Targets) => void; committedItems: Item[]; unscheduled: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
+function WeekSection({ weekItems, weekMinutes, categoryTotals, largestCategory, conflicts, targets, projects, onSaveTargets, committedItems, unscheduled, laterItems, onOpen, onDone }: { weekItems: Item[]; weekMinutes: number; categoryTotals: { category: Category; minutes: number }[]; largestCategory: number; conflicts: { category: Category; minutes: number }[]; targets: Targets; projects: Project[]; onSaveTargets: (targets: Targets) => void; committedItems: Item[]; unscheduled: Item[]; laterItems: Item[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
   const [draftTargets, setDraftTargets] = useState<Targets>(targets);
-  const [showTargets, setShowTargets] = useState(() => Object.values(targets).some((value) => value !== undefined));
+  const targetsAlreadySet = Object.values(targets).some((value) => value !== undefined);
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const weekStartDisplay = startOfWeek(new Date());
   const weekEnd = addDays(weekStartDisplay, 6);
@@ -68,19 +68,32 @@ function WeekSection({ weekItems, weekMinutes, categoryTotals, largestCategory, 
     </section>
 
     <section className="card">
-      <div className="card-header"><div><div className="section-label">Items in the draft</div><h2>What is taking space?</h2></div></div>
-      <ItemListWithDone items={weekItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Organize an item and choose Today or This Week to see it here." />
+      <div className="card-header"><div><div className="section-label">Feed</div><h2>Everything not locked to a day yet.</h2></div></div>
+      <div className="field full">
+        <label>Yet to organise ({weekItems.length})</label>
+        <div style={{ marginTop: 8 }}><ItemListWithDone items={weekItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Organize an item and choose Today or This Week to see it here." /></div>
+      </div>
+      <div className="field full" style={{ marginTop: 18 }}>
+        <label>Unscheduled ({unscheduled.length})</label>
+        <div style={{ marginTop: 8 }}><ItemListWithDone items={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Everything committed has a day, or nothing is committed yet." /></div>
+      </div>
+      {/* Same collapsed-by-default details/summary pattern ItemListWithDone
+          already uses for "Completed" - Later items stay out of the way
+          until you actually want to look at them, not shown by default. */}
+      <details style={{ marginTop: 18 }}>
+        <summary className="section-label">Saved for later · {laterItems.length}</summary>
+        <div style={{ marginTop: 10 }}><ItemListWithDone items={laterItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Nothing parked right now." /></div>
+      </details>
     </section>
 
-    <UnscheduledCard items={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} />
-
-    <section className="card">
-      <div className="card-header"><div><div className="section-label">Optional setup</div><h2>Weekly targets</h2></div><button type="button" className="ghost small-button" onClick={() => setShowTargets((current) => !current)}>{showTargets ? "Hide" : "Set targets"}</button></div>
-      {showTargets && <><p className="empty">Targets help the draft show where your time is going. You can skip this and return here later.</p>
+    <details className="card" style={{ padding: "12px 17px" }} open={targetsAlreadySet}>
+      <summary className="section-label">Weekly targets (optional)</summary>
+      <div style={{ marginTop: 12 }}>
+        <p className="hint">Targets help the draft show where your time is going. You can skip this and return here later.</p>
         <div className="form-grid" style={{ marginTop: 14 }}>{OVERVIEW_CATEGORIES.map((category) => <div className="field" key={category}><label htmlFor={`target-${category}`}>{category} hours</label><input id={`target-${category}`} type="number" min="0" step="0.5" value={draftTargets[category] ?? ""} onChange={(event) => setDraftTargets({ ...draftTargets, [category]: event.target.value ? Number(event.target.value) : undefined })} placeholder="Not set" /></div>)}</div>
         <div className="actions"><button className="primary" onClick={() => onSaveTargets(draftTargets)}>Save targets</button></div>
-      </>}
-    </section>
+      </div>
+    </details>
   </div>;
 }
 
@@ -293,14 +306,6 @@ function ReflectionPanel({ doneToday, doneThisWeek, unfinishedThisWeek, openItem
   </div>;
 }
 
-function SavedForLater({ items, projects, onOpen, onDone }: { items: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
-  const [open, setOpen] = useState(false);
-  return <section className="card">
-    <div className="card-header"><div><div className="section-label">Saved for later</div><h2>{items.length} parked</h2></div><button type="button" className="ghost small-button" onClick={() => setOpen((current) => !current)}>{open ? "Hide" : "Show"}</button></div>
-    {open && <ItemListWithDone items={items} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Nothing parked right now." />}
-  </section>;
-}
-
 const OVERVIEW_MODES = [["today", "Today"], ["week", "Week"], ["month", "Month"], ["projects", "Projects"], ["reflect", "Reflect"]] as const;
 type OverviewMode = (typeof OVERVIEW_MODES)[number][0];
 
@@ -338,7 +343,7 @@ export function OverviewPage({ todayItems, thisWeekItems, weekItems, weekMinutes
 
   const sections: Record<OverviewMode, React.ReactNode> = {
     today: <TodayView todayItems={todayItems} thisWeekItems={thisWeekItems} projects={projects} onOpen={onOpen} onDone={onDone} />,
-    week: <WeekSection weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} projects={projects} onSaveTargets={onSaveTargets} committedItems={committedItems} unscheduled={unscheduled} onOpen={onOpen} onDone={onDone} />,
+    week: <WeekSection weekItems={weekItems} weekMinutes={weekMinutes} categoryTotals={categoryTotals} largestCategory={largestCategory} conflicts={categoryConflicts} targets={targets} projects={projects} onSaveTargets={onSaveTargets} committedItems={committedItems} unscheduled={unscheduled} laterItems={laterItems} onOpen={onOpen} onDone={onDone} />,
     month: <MonthSection month={month} setMonth={setMonth} items={committedItems} unscheduled={unscheduled} projects={projects} staleLater={staleLater} onOpen={onOpen} onDone={onDone} />,
     projects: <ProjectsSection projects={projects} allItems={allItems} onOpen={onOpenProject} onCreateProject={onCreateProject} />,
     reflect: <ReflectionPanel doneToday={doneToday} doneThisWeek={doneThisWeek} unfinishedThisWeek={unfinishedThisWeek} openItems={openItems} allItems={allItems} projects={projects} reflections={reflections} onOpen={onOpen} onDrop={onDrop} onReplace={onReplace} onDone={onDone} onSave={onSaveReflection} />,
@@ -347,6 +352,5 @@ export function OverviewPage({ todayItems, thisWeekItems, weekItems, weekMinutes
   return <div className="stack">
     <div className="chips">{OVERVIEW_MODES.map(([key, label]) => <button type="button" key={key} className={`chip ${mode === key ? "selected" : ""}`} onClick={() => setMode(key)}>{label}</button>)}</div>
     {sections[mode]}
-    <SavedForLater items={laterItems} projects={projects} onOpen={onOpen} onDone={onDone} />
   </div>;
 }
