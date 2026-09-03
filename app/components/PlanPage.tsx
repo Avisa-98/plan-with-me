@@ -1,11 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Category, Item, ItemType, Project } from "../../lib/storage";
+import type { Category, Item, ItemType } from "../../lib/storage";
 import { joinSelected, segmentText } from "../../lib/split";
 import { ItemRow } from "./shared";
 import { BucketDateChips } from "./BucketDateChips";
-import { ProjectQuickAssign } from "./ProjectQuickAssign";
 
 function CaptureBox({ capture, setCapture, onSubmit }: { capture: string; setCapture: (value: string) => void; onSubmit: () => void }) {
   return <section className="card capture-card">
@@ -54,7 +53,7 @@ function SplitInline({ item, onAddChild }: { item: Item; onAddChild: (text: stri
 
 const PLAN_CATEGORIES: Category[] = ["Work", "Social", "Personal"];
 
-function PlanRow({ item, projects, onSave, onDelete, onCreateProject, onAddChild, expanded, onToggleExpand }: { item: Item; projects: Project[]; onSave: (item: Item) => void; onDelete: () => void; onCreateProject: (project: Project) => void; onAddChild: (text: string, type: ItemType) => void; expanded: boolean; onToggleExpand: () => void }) {
+function PlanRow({ item, onSave, onDelete, onAddChild, expanded, onToggleExpand }: { item: Item; onSave: (item: Item) => void; onDelete: () => void; onAddChild: (text: string, type: ItemType) => void; expanded: boolean; onToggleExpand: () => void }) {
   const [draft, setDraft] = useState<Item>(item);
   const [showSplit, setShowSplit] = useState(false);
   const [hours, setHours] = useState(item.estimateMinutes ? String(Math.floor(item.estimateMinutes / 60)) : "");
@@ -82,7 +81,7 @@ function PlanRow({ item, projects, onSave, onDelete, onCreateProject, onAddChild
     onToggleExpand();
   }
 
-  if (!expanded) return <ItemRow item={item} projects={projects} onOpen={onToggleExpand} action="Organize" />;
+  if (!expanded) return <ItemRow item={item} onOpen={onToggleExpand} action="Organize" />;
 
   return <div className="item-row-wrap">
     <div className="card" style={{ boxShadow: "none", padding: 14 }}>
@@ -99,7 +98,6 @@ function PlanRow({ item, projects, onSave, onDelete, onCreateProject, onAddChild
         <div className="row-footer" style={{ marginTop: 8, alignItems: "flex-end" }}>
           <div className="field" style={{ width: 90 }}><label>Hours</label><input inputMode="numeric" value={hours} onChange={(event) => { setHours(event.target.value); setEstimate(event.target.value, minutes); }} placeholder="0" /></div>
           <div className="field" style={{ width: 90 }}><label>Minutes</label><input inputMode="numeric" value={minutes} onChange={(event) => { setMinutes(event.target.value); setEstimate(hours, event.target.value); }} placeholder="0" /></div>
-          <ProjectQuickAssign projectId={draft.projectId} projects={projects} onChange={(projectId) => set({ projectId, category: projectId ? undefined : draft.category })} onCreate={onCreateProject} />
           <button type="button" className="ghost small-button" onClick={() => setShowSplit((current) => !current)}>Split</button>
         </div>
       </>}
@@ -112,13 +110,13 @@ function PlanRow({ item, projects, onSave, onDelete, onCreateProject, onAddChild
   </div>;
 }
 
-export function PlanPage({ items, projects, capture, setCapture, onAddThought, onSaveItem, onDeleteItem, onCreateProject, onAddChild }: { items: Item[]; projects: Project[]; capture: string; setCapture: (value: string) => void; onAddThought: () => void; onSaveItem: (item: Item) => void; onDeleteItem: (id: string) => void; onCreateProject: (project: Project) => void; onAddChild: (parentId: string, text: string, type: ItemType) => void }) {
+export function PlanPage({ items, capture, setCapture, onAddThought, onSaveItem, onDeleteItem, onAddChild }: { items: Item[]; capture: string; setCapture: (value: string) => void; onAddThought: () => void; onSaveItem: (item: Item) => void; onDeleteItem: (id: string) => void; onAddChild: (parentId: string, text: string, type: ItemType) => void }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   return <div className="stack">
     <CaptureBox capture={capture} setCapture={setCapture} onSubmit={onAddThought} />
     <section className="card">
       <div className="card-header"><div><div className="section-label">Organize</div><h2>{items.length ? `${items.length} to organize` : "Nothing waiting"}</h2></div></div>
-      {items.length ? <div className="item-list">{items.map((item) => <PlanRow key={item.id} item={item} projects={projects} onSave={onSaveItem} onDelete={() => onDeleteItem(item.id)} onCreateProject={onCreateProject} onAddChild={(text, type) => onAddChild(item.id, text, type)} expanded={expandedId === item.id} onToggleExpand={() => setExpandedId((current) => current === item.id ? null : item.id)} />)}</div> : <p className="empty">Add a thought above — it'll show up here to organize.</p>}
+      {items.length ? <div className="item-list">{items.map((item) => <PlanRow key={item.id} item={item} onSave={onSaveItem} onDelete={() => onDeleteItem(item.id)} onAddChild={(text, type) => onAddChild(item.id, text, type)} expanded={expandedId === item.id} onToggleExpand={() => setExpandedId((current) => current === item.id ? null : item.id)} />)}</div> : <p className="empty">Add a thought above — it'll show up here to organize.</p>}
     </section>
   </div>;
 }

@@ -18,7 +18,6 @@ export type Item = {
   dueDate?: string;
   eventStart?: string;
   eventEnd?: string;
-  projectId?: string;
   done?: boolean;
   actualMinutes?: number;
   splitFrom?: string;
@@ -26,47 +25,45 @@ export type Item = {
   updatedAt: string;
 };
 
-// A project's category applies to every one of its subtasks - a subtask
-// never carries its own category while it belongs to a project (see
-// effectiveCategory in lib/projects.ts). startDate/endDate mark the
-// project's own window (a one-week sprint, a three-month rollout), separate
-// from any individual subtask's own due date.
-export type Project = { id: string; name: string; category?: Category; startDate?: string; endDate?: string; done: boolean; createdAt: string; updatedAt: string };
-
-export type Reflection = { id: string; type: "daily" | "weekly"; text: string; createdAt: string };
 export type Targets = Partial<Record<Category, number>>;
-export type StoredData = { deviceKey: string; items: Item[]; reflections: Reflection[]; targets: Targets; projects: Project[] };
+export type StoredData = { deviceKey: string; items: Item[]; targets: Targets };
 
 const STORAGE_KEY = "plan-with-me:v1";
 
 export function emptyData(): StoredData {
-  return { deviceKey: crypto.randomUUID(), items: [], reflections: [], targets: {}, projects: [] };
+  return { deviceKey: crypto.randomUUID(), items: [], targets: {} };
 }
 
-// Three renames normalized here:
+// Two renames normalized here:
 // - "Unprocessed" (the old status value) -> "Inbox"
 // - "Entertainment" (the old category name) -> "Personal", both on items
 //   and on any weekly target key set for it
-// - the old free-text `project` field on an item -> a real Project entity,
-//   with items that already shared the same project name grouped into one
-//   migrated project rather than duplicated per item
 // Anything saved before these renames still has the old value sitting in
-// someone's browser or an old backup file - this fixes all three on the way
-// in, so nothing is silently left with a value the current app no longer
-// recognizes, and nothing (an item, a target, a project grouping) disappears
-// because of it.
+// someone's browser or an old backup file - this fixes both on the way in,
+// so nothing is silently left with a value the current app no longer
+// recognizes.
+//
+// Projects and Reflections were removed as a feature - any of that data
+// still sitting in an old backup or a browser's storage is simply dropped
+// here rather than migrated forward, along with the old projectId field an
+// item might still carry from before.
 function migrate(data: StoredData): StoredData {
   // Only touch the specific field that needs fixing, on only the items that
   // need it - spreading in a key unconditionally (even set to undefined)
   // would add it to items that never had it, which is a different object
   // shape than the original, not merely a fixed value.
   const CATEGORY_MIGRATION: Record<string, Category> = { Family: "Social", Friends: "Social", Health: "Personal" };
-  const statusAndCategoryFixed = data.items.map((item) => {
+  const items = data.items.map((item) => {
     const fix: Partial<Item> = {};
     if ((item.status as string) === "Unprocessed") fix.status = "Inbox";
     if ((item.category as string) === "Entertainment") fix.category = "Personal";
     if (item.category && (item.category as string) in CATEGORY_MIGRATION) fix.category = CATEGORY_MIGRATION[item.category as string];
-    return Object.keys(fix).length ? { ...item, ...fix } : item;
+    const withFix = Object.keys(fix).length ? { ...item, ...fix } : item;
+    if ("projectId" in withFix) {
+      const { projectId: _projectId, ...rest } = withFix as Item & { projectId?: string };
+      return rest;
+    }
+    return withFix;
   });
 
   const targets = { ...data.targets } as Record<string, number | undefined>;
@@ -75,26 +72,7 @@ function migrate(data: StoredData): StoredData {
     delete targets.Entertainment;
   }
 
-  const projects = data.projects.map((project) => {
-    if (project.category && (project.category as string) in CATEGORY_MIGRATION) return { ...project, category: CATEGORY_MIGRATION[project.category as string] };
-    return project;
-  });
-  const projectByName = new Map(projects.map((project) => [project.name, project]));
-  const items = statusAndCategoryFixed.map((item) => {
-    const legacyName = (item as Item & { project?: string }).project;
-    if (!legacyName || item.projectId) return item;
-    let project = projectByName.get(legacyName);
-    if (!project) {
-      const now = new Date().toISOString();
-      project = { id: crypto.randomUUID(), name: legacyName, done: false, createdAt: now, updatedAt: now };
-      projectByName.set(legacyName, project);
-      projects.push(project);
-    }
-    const { project: _legacyProject, ...rest } = item as Item & { project?: string };
-    return { ...rest, projectId: project.id };
-  });
-
-  return { ...data, items, targets, projects };
+  return { ...data, items, targets };
 }
 
 export function loadData(): StoredData {

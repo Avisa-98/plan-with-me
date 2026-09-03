@@ -22,18 +22,16 @@ test("targets survive a save/reload round trip", () => {
   assert.deepEqual(loadData().targets, { Work: 20, Health: 5 });
 });
 
-test("items and reflections survive a save/reload round trip", () => {
+test("items survive a save/reload round trip", () => {
   const now = new Date().toISOString();
   const data = {
     ...emptyData(),
     items: [{ id: "a", text: "call the bank", status: "Planned" as const, bucket: "Later" as const, createdAt: now, updatedAt: now }],
-    reflections: [{ id: "r", type: "daily" as const, text: "good day", createdAt: now }],
   };
   saveData(data);
   const back = loadData();
   assert.equal(back.items[0].text, "call the bank");
   assert.equal(back.items[0].bucket, "Later");
-  assert.equal(back.reflections[0].text, "good day");
 });
 
 test("the device key is stable across reloads", () => {
@@ -54,9 +52,7 @@ test("exportData produces JSON that parseImport reads back exactly", () => {
   const data = {
     deviceKey: "device-1",
     items: [{ id: "a", text: "call the bank", status: "Inbox" as const, createdAt: now, updatedAt: now }],
-    reflections: [],
     targets: { Work: 10 },
-    projects: [],
   };
   assert.deepEqual(parseImport(exportData(data)), data);
 });
@@ -70,7 +66,6 @@ test("loadData migrates a legacy 'Unprocessed' status to 'Inbox'", () => {
   store.set("plan-with-me:v1", JSON.stringify({
     deviceKey: "device-3",
     items: [{ id: "a", text: "old item", status: "Unprocessed", createdAt: now, updatedAt: now }],
-    reflections: [],
     targets: {},
   }));
   assert.equal(loadData().items[0].status, "Inbox");
@@ -81,7 +76,6 @@ test("parseImport migrates a legacy 'Unprocessed' status in an imported backup f
   const raw = JSON.stringify({
     deviceKey: "device-4",
     items: [{ id: "a", text: "old item", status: "Unprocessed", createdAt: now, updatedAt: now }],
-    reflections: [],
     targets: {},
   });
   assert.equal(parseImport(raw)?.items[0].status, "Inbox");
@@ -95,7 +89,6 @@ test("loadData migrates a legacy 'Entertainment' category on an item to 'Persona
   store.set("plan-with-me:v1", JSON.stringify({
     deviceKey: "device-6",
     items: [{ id: "a", text: "watch a film", status: "Planned", bucket: "Today", category: "Entertainment", createdAt: now, updatedAt: now }],
-    reflections: [],
     targets: {},
   }));
   assert.equal(loadData().items[0].category, "Personal");
@@ -105,7 +98,6 @@ test("loadData migrates a legacy 'Entertainment' weekly target to 'Personal', ke
   store.set("plan-with-me:v1", JSON.stringify({
     deviceKey: "device-7",
     items: [],
-    reflections: [],
     targets: { Work: 20, Entertainment: 6 },
   }));
   const targets = loadData().targets;
@@ -119,7 +111,6 @@ test("parseImport migrates a legacy 'Entertainment' category and target too", ()
   const raw = JSON.stringify({
     deviceKey: "device-8",
     items: [{ id: "a", text: "watch a film", status: "Planned", bucket: "Today", category: "Entertainment", createdAt: now, updatedAt: now }],
-    reflections: [],
     targets: { Entertainment: 6 },
   });
   const back = parseImport(raw);
@@ -132,7 +123,6 @@ test("migration leaves a Work category and target untouched", () => {
   store.set("plan-with-me:v1", JSON.stringify({
     deviceKey: "device-9",
     items: [{ id: "a", text: "write proposal", status: "Planned", bucket: "Today", category: "Work", createdAt: now, updatedAt: now }],
-    reflections: [],
     targets: { Work: 10 },
   }));
   const back = loadData();
@@ -140,82 +130,18 @@ test("migration leaves a Work category and target untouched", () => {
   assert.equal(back.targets.Work, 10);
 });
 
-// Projects used to be a free-text field on the item ("project: 'MIS
-// Rollout'") before they became real entities you create and attach tasks
-// to. Anything saved with that old text field must turn into a real project
-// on the way in, not silently lose the grouping.
-test("loadData turns a legacy free-text project into a real project entity", () => {
+// Projects were removed as a feature - any old projectId an item still
+// carries from before must be dropped on the way in, not linger as dead
+// data the app no longer reads or writes.
+test("loadData drops a legacy projectId left over from before Projects was removed", () => {
   const now = new Date().toISOString();
   store.set("plan-with-me:v1", JSON.stringify({
     deviceKey: "device-10",
-    items: [{ id: "a", text: "draft the SOW", status: "Planned", bucket: "Today", project: "MIS Rollout", createdAt: now, updatedAt: now }],
-    reflections: [],
+    items: [{ id: "a", text: "old subtask", status: "Planned", bucket: "Today", projectId: "some-project", createdAt: now, updatedAt: now }],
     targets: {},
   }));
   const back = loadData();
-  assert.equal(back.projects.length, 1);
-  assert.equal(back.projects[0].name, "MIS Rollout");
-  assert.equal(back.items[0].projectId, back.projects[0].id);
-  assert.equal("project" in back.items[0], false, "the old text field should not linger on the migrated item");
-});
-
-test("two items with the same legacy project name are grouped into one project, not two", () => {
-  const now = new Date().toISOString();
-  store.set("plan-with-me:v1", JSON.stringify({
-    deviceKey: "device-11",
-    items: [
-      { id: "a", text: "draft the SOW", status: "Planned", bucket: "Today", project: "MIS Rollout", createdAt: now, updatedAt: now },
-      { id: "b", text: "book the kickoff call", status: "Planned", bucket: "Today", project: "MIS Rollout", createdAt: now, updatedAt: now },
-    ],
-    reflections: [],
-    targets: {},
-  }));
-  const back = loadData();
-  assert.equal(back.projects.length, 1);
-  assert.equal(back.items[0].projectId, back.items[1].projectId);
-});
-
-test("items with different legacy project names get separate projects", () => {
-  const now = new Date().toISOString();
-  store.set("plan-with-me:v1", JSON.stringify({
-    deviceKey: "device-12",
-    items: [
-      { id: "a", text: "draft the SOW", status: "Planned", project: "MIS Rollout", createdAt: now, updatedAt: now },
-      { id: "b", text: "book flights", status: "Planned", project: "Trip planning", createdAt: now, updatedAt: now },
-    ],
-    reflections: [],
-    targets: {},
-  }));
-  const back = loadData();
-  assert.equal(back.projects.length, 2);
-  assert.notEqual(back.items[0].projectId, back.items[1].projectId);
-});
-
-test("an item with no legacy project field is left without a projectId", () => {
-  const now = new Date().toISOString();
-  store.set("plan-with-me:v1", JSON.stringify({
-    deviceKey: "device-13",
-    items: [{ id: "a", text: "no project here", status: "Inbox", createdAt: now, updatedAt: now }],
-    reflections: [],
-    targets: {},
-  }));
-  const back = loadData();
-  assert.equal(back.items[0].projectId, undefined);
-  assert.equal(back.projects.length, 0);
-});
-
-test("an item that already has a projectId is not migrated again", () => {
-  const now = new Date().toISOString();
-  store.set("plan-with-me:v1", JSON.stringify({
-    deviceKey: "device-14",
-    items: [{ id: "a", text: "already grouped", status: "Planned", project: "Should be ignored", projectId: "existing-project", createdAt: now, updatedAt: now }],
-    reflections: [],
-    targets: {},
-    projects: [{ id: "existing-project", name: "Real project", done: false, createdAt: now, updatedAt: now }],
-  }));
-  const back = loadData();
-  assert.equal(back.items[0].projectId, "existing-project");
-  assert.equal(back.projects.length, 1);
+  assert.equal("projectId" in back.items[0], false);
 });
 
 test("migration leaves a Planned item's status untouched", () => {
@@ -223,7 +149,6 @@ test("migration leaves a Planned item's status untouched", () => {
   store.set("plan-with-me:v1", JSON.stringify({
     deviceKey: "device-5",
     items: [{ id: "a", text: "committed item", status: "Planned", bucket: "Today", createdAt: now, updatedAt: now }],
-    reflections: [],
     targets: {},
   }));
   const item = loadData().items[0];
@@ -241,12 +166,11 @@ test("parseImport rejects JSON with no items array - not a backup file", () => {
 
 test("parseImport fills in any missing fields with defaults, but keeps the file's own device key", () => {
   const back = parseImport(JSON.stringify({ items: [], deviceKey: "device-2" }));
-  assert.deepEqual(back?.reflections, []);
   assert.deepEqual(back?.targets, {});
   assert.equal(back?.deviceKey, "device-2");
 });
 
-test("migrate maps old categories onto the new three-category set, for items and projects", () => {
+test("migrate maps old categories onto the new three-category set", () => {
   const now = new Date().toISOString();
   const raw = {
     deviceKey: "d",
@@ -256,16 +180,13 @@ test("migrate maps old categories onto the new three-category set, for items and
       { id: "3", text: "c", status: "Inbox", category: "Health", createdAt: now, updatedAt: now },
       { id: "4", text: "d", status: "Inbox", category: "Work", createdAt: now, updatedAt: now },
     ],
-    reflections: [],
     targets: {},
-    projects: [{ id: "p1", name: "P", category: "Friends", done: false, createdAt: now, updatedAt: now }],
   };
   const result = parseImport(JSON.stringify(raw));
   assert.equal(result?.items.find((i) => i.id === "1")?.category, "Social");
   assert.equal(result?.items.find((i) => i.id === "2")?.category, "Social");
   assert.equal(result?.items.find((i) => i.id === "3")?.category, "Personal");
   assert.equal(result?.items.find((i) => i.id === "4")?.category, "Work");
-  assert.equal(result?.projects.find((p) => p.id === "p1")?.category, "Social");
 });
 
 test("migrate leaves This Month and Later buckets untouched, and This Month is a valid new bucket", () => {
@@ -273,9 +194,7 @@ test("migrate leaves This Month and Later buckets untouched, and This Month is a
   const raw = {
     deviceKey: "d",
     items: [{ id: "1", text: "a", status: "Planned", bucket: "This Month", createdAt: now, updatedAt: now }],
-    reflections: [],
     targets: {},
-    projects: [],
   };
   const result = parseImport(JSON.stringify(raw));
   assert.equal(result?.items[0].bucket, "This Month");

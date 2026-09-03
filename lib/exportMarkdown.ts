@@ -1,6 +1,5 @@
-import type { Bucket, Item, Project, StoredData } from "./storage";
-import { isIdea, isLater, isUnresolved, isWeekItem } from "./views.ts";
-import { effectiveCategory } from "./projects.ts";
+import type { Bucket, Item, StoredData } from "./storage";
+import { isIdea, isLater, isMonthItem, isUnresolved, isWeekItem } from "./views.ts";
 
 /**
  * A read-only, human-readable copy of everything - separate from
@@ -23,18 +22,18 @@ function formatMinutes(minutes?: number) {
 // One line per task: a checkbox, the text, then whatever of
 // category/estimate/due date is actually set, in parentheses - and no
 // parentheses at all if none of them are.
-function taskLine(item: Item, projects: Project[]): string {
+function taskLine(item: Item): string {
   const box = item.done ? "[x]" : "[ ]";
-  const details = [effectiveCategory(item, projects), formatMinutes(item.estimateMinutes), item.dueDate ? `due ${item.dueDate}` : undefined]
+  const details = [item.category, formatMinutes(item.estimateMinutes), item.dueDate ? `due ${item.dueDate}` : undefined]
     .filter((part): part is string => !!part)
     .join(" · ");
   return `- ${box} ${item.text}${details ? ` (${details})` : ""}`;
 }
 
-function bucketSection(title: string, items: Item[], bucket: Bucket | undefined, projects: Project[]): string | null {
+function bucketSection(title: string, items: Item[], bucket: Bucket | undefined): string | null {
   const inBucket = items.filter((item) => item.bucket === bucket);
   if (inBucket.length === 0) return null;
-  return `## ${title}\n${inBucket.map((item) => taskLine(item, projects)).join("\n")}`;
+  return `## ${title}\n${inBucket.map((item) => taskLine(item)).join("\n")}`;
 }
 
 export function exportMarkdown(data: StoredData): string {
@@ -45,20 +44,15 @@ export function exportMarkdown(data: StoredData): string {
     sections.push(`## Idea Log\n${ideas.map((item) => `- ${item.text}`).join("\n")}`);
   }
 
-  const weekAndLater = data.items.filter((item) => isWeekItem(item) || isLater(item));
-  for (const [title, bucket] of [["Today", "Today"], ["This Week", "This Week"], ["Later", "Later"]] as const) {
-    const section = bucketSection(title, weekAndLater, bucket, data.projects);
+  const committed = data.items.filter((item) => isWeekItem(item) || isMonthItem(item) || isLater(item));
+  for (const [title, bucket] of [["Today", "Today"], ["This Week", "This Week"], ["This Month", "This Month"], ["Later", "Later"]] as const) {
+    const section = bucketSection(title, committed, bucket);
     if (section) sections.push(section);
   }
 
   const inbox = data.items.filter(isUnresolved);
   if (inbox.length > 0) {
     sections.push(`## Inbox\n${inbox.map((item) => `- ${item.text}`).join("\n")}`);
-  }
-
-  if (data.reflections.length > 0) {
-    const lines = data.reflections.map((r) => `### ${r.type === "daily" ? "Daily" : "Weekly"} — ${new Date(r.createdAt).toLocaleDateString()}\n${r.text}`);
-    sections.push(`## Reflections\n${lines.join("\n\n")}`);
   }
 
   if (sections.length === 1) {

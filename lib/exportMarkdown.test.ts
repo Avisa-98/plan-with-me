@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { StoredData, Item, Project } from "./storage.ts";
+import type { StoredData, Item } from "./storage.ts";
 import { exportMarkdown } from "./exportMarkdown.ts";
 
 function item(over: Partial<Item> = {}): Item {
@@ -8,13 +8,8 @@ function item(over: Partial<Item> = {}): Item {
   return { id: Math.random().toString(36).slice(2), text: "t", status: "Inbox", createdAt: now, updatedAt: now, ...over };
 }
 
-function project(over: Partial<Project> = {}): Project {
-  const now = new Date().toISOString();
-  return { id: "p1", name: "Project", done: false, createdAt: now, updatedAt: now, ...over };
-}
-
-function data(items: Item[] = [], reflections: StoredData["reflections"] = [], projects: Project[] = []): StoredData {
-  return { deviceKey: "d", items, reflections, targets: {}, projects };
+function data(items: Item[] = []): StoredData {
+  return { deviceKey: "d", items, targets: {} };
 }
 
 test("an idea appears as a plain bullet under Idea Log", () => {
@@ -39,30 +34,22 @@ test("category, estimate, and due date are annotated inline when present", () =>
   assert.match(md, /- \[ \] zoom w\/ client \(Work · 1h 30m · due 2026-09-05\)/);
 });
 
-test("a subtask's line shows its project's category, not its own stale field", () => {
-  const proj = project({ id: "p1", name: "MIS Rollout", category: "Personal" });
-  const md = exportMarkdown(data(
-    [item({ text: "draft the SOW", status: "Planned", bucket: "Today", projectId: "p1", category: "Work", estimateMinutes: 60 })],
-    [],
-    [proj],
-  ));
-  assert.match(md, /- \[ \] draft the SOW \(Personal · 1h\)/);
-});
-
 test("a task with no category, estimate, or due date shows with no parentheses at all", () => {
   const md = exportMarkdown(data([item({ text: "bare task", status: "Planned", bucket: "Today" })]));
   assert.match(md, /- \[ \] bare task\n/);
   assert.doesNotMatch(md, /bare task \(/);
 });
 
-test("Today, This Week, and Later each get their own heading with only their own items", () => {
+test("Today, This Week, This Month, and Later each get their own heading with only their own items", () => {
   const md = exportMarkdown(data([
     item({ text: "today item", status: "Planned", bucket: "Today" }),
     item({ text: "week item", status: "Planned", bucket: "This Week" }),
+    item({ text: "month item", status: "Planned", bucket: "This Month" }),
     item({ text: "later item", status: "Planned", bucket: "Later" }),
   ]));
   assert.match(md, /## Today[\s\S]*today item/);
   assert.match(md, /## This Week[\s\S]*week item/);
+  assert.match(md, /## This Month[\s\S]*month item/);
   assert.match(md, /## Later[\s\S]*later item/);
 });
 
@@ -76,12 +63,6 @@ test("an empty section produces no heading at all - no blank ## Later with nothi
   assert.doesNotMatch(md, /## Later/);
   assert.doesNotMatch(md, /## This Week/);
   assert.doesNotMatch(md, /## Idea Log/);
-});
-
-test("a reflection appears under Reflections with its date", () => {
-  const md = exportMarkdown(data([], [{ id: "r", type: "daily", text: "good day", createdAt: "2026-08-30T10:00:00.000Z" }]));
-  assert.match(md, /## Reflections/);
-  assert.match(md, /good day/);
 });
 
 test("completely empty data produces a readable file, not a crash or a blank string", () => {

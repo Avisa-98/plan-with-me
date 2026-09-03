@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Item, Project } from "../../lib/storage";
-import { effectiveCategory } from "../../lib/projects";
+import type { Item } from "../../lib/storage";
 
 export function formatMinutes(minutes?: number) {
   if (!minutes) return "Estimate needed";
@@ -18,8 +17,7 @@ export function estimateTag(minutes?: number) {
   return minutes ? `${formatMinutes(minutes)} estimated` : "Estimate needed";
 }
 
-export function ItemRow({ item, projects, onOpen, action, footer, onDone }: { item: Item; projects: Project[]; onOpen: (item: Item) => void; action: string; footer?: React.ReactNode; onDone?: (item: Item) => void }) {
-  const category = effectiveCategory(item, projects);
+export function ItemRow({ item, onOpen, action, footer, onDone }: { item: Item; onOpen: (item: Item) => void; action: string; footer?: React.ReactNode; onDone?: (item: Item) => void }) {
   return <div className="item-row-wrap">
     <div className={`item-row${item.done ? " item-row-done" : ""}`}>
       {onDone && <input type="checkbox" className="item-checkbox" checked={!!item.done} onChange={() => onDone(item)} aria-label={item.done ? "Mark not done" : "Mark done"} />}
@@ -27,7 +25,7 @@ export function ItemRow({ item, projects, onOpen, action, footer, onDone }: { it
         <div className="item-text">{item.text}</div>
         <div className="item-meta">
           {item.splitFrom && <span className="tag subtle">↗ from a braindump</span>}
-          {category && <span className="tag">{category}</span>}
+          {item.category && <span className="tag">{item.category}</span>}
           {item.bucket && <span className="tag">{item.bucket}</span>}
           {item.estimateMinutes ? <span className="tag accent">{formatMinutes(item.estimateMinutes)}</span> : <span className="tag">Estimate needed</span>}
         </div>
@@ -36,23 +34,6 @@ export function ItemRow({ item, projects, onOpen, action, footer, onDone }: { it
     </div>
     {footer}
   </div>;
-}
-
-// A list of items where the done ones don't clutter the main view - they
-// strike through and tuck under a collapsed "Completed" dropdown instead of
-// sitting inline in the same list. Still reachable (tap to expand, undo
-// still works), just out of the way by default.
-export function ItemListWithDone({ items, projects, onOpen, onDone, action, empty }: { items: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void; action: string; empty: string }) {
-  if (!items.length) return <p className="empty">{empty}</p>;
-  const open = items.filter((item) => !item.done);
-  const done = items.filter((item) => item.done);
-  return <>
-    {open.length > 0 && <div className="item-list">{open.map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action={action} onDone={onDone} />)}</div>}
-    {done.length > 0 && <details style={{ marginTop: open.length ? 10 : 0 }}>
-      <summary className="section-label">Completed · {done.length}</summary>
-      <div className="item-list" style={{ marginTop: 10 }}>{done.map((item) => <ItemRow key={item.id} item={item} projects={projects} onOpen={onOpen} action={action} onDone={onDone} />)}</div>
-    </details>}
-  </>;
 }
 
 export function DoneModal({ item, onConfirm, onSkip }: { item: Item; onConfirm: (minutes: number | undefined) => void; onSkip: () => void }) {
