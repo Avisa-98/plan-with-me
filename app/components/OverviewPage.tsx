@@ -10,21 +10,21 @@ import { formatMinutes, estimateTag, ItemListWithDone } from "./shared";
 
 const OVERVIEW_CATEGORIES: Category[] = ["Work", "Social", "Personal"];
 
+// One card, segmented, same shape as Week's Feed card - Today and "still
+// open for the week" used to be two separate cards for no real reason,
+// both are just "what's on deck," not different kinds of thing.
 function TodayView({ todayItems, thisWeekItems, projects, onOpen, onDone }: { todayItems: Item[]; thisWeekItems: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
-  return <div className="stack">
-    <section className="card">
-      <div className="card-header"><div><div className="section-label">Today</div><h2>{todayItems.length ? `${todayItems.length} thing${todayItems.length === 1 ? "" : "s"} today` : "Nothing committed to today yet"}</h2></div></div>
-      <ItemListWithDone items={todayItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Organize a note from Plan and choose Today to see it here." />
-    </section>
-    <section className="card">
-      <div className="card-header"><div><div className="section-label">This week, not on a specific day</div><h2>Still open for the week</h2></div></div>
-      <ItemListWithDone items={thisWeekItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Nothing else queued for this week." />
-    </section>
-  </div>;
-}
-
-function UnscheduledCard({ items, projects, onOpen, onDone }: { items: Item[]; projects: Project[]; onOpen: (item: Item) => void; onDone: (item: Item) => void }) {
-  return <section className="card"><div className="card-header"><div><div className="section-label">Unscheduled</div><h2>No specific day yet.</h2></div><span className="tag">{items.length}</span></div><ItemListWithDone items={items} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Everything committed has a day, or nothing is committed yet. Add a due date in Plan to put an item on the calendar." /></section>;
+  return <section className="card">
+    <div className="card-header"><div><div className="section-label">Today</div><h2>{todayItems.length ? `${todayItems.length} thing${todayItems.length === 1 ? "" : "s"} today` : "Nothing committed to today yet"}</h2></div></div>
+    <div className="field full">
+      <label>Today ({todayItems.length})</label>
+      <div style={{ marginTop: 8 }}><ItemListWithDone items={todayItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Organize a note from Plan and choose Today to see it here." /></div>
+    </div>
+    <div className="field full" style={{ marginTop: 18 }}>
+      <label>This week, not on a specific day ({thisWeekItems.length})</label>
+      <div style={{ marginTop: 8 }}><ItemListWithDone items={thisWeekItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Nothing else queued for this week." /></div>
+    </div>
+  </section>;
 }
 
 // Combines the old category/targets breakdown with the day-by-day grid -
@@ -105,36 +105,37 @@ function MonthSection({ month, setMonth, items, unscheduled, projects, staleLate
   const cells = monthGridCells(month);
   const pickedDayItems = pickedDay ? itemsOnDate(items, toDateKey(pickedDay)) : [];
 
-  return <div className="stack">
-    <section className="card">
-      <div className="card-header">
-        <div><div className="section-label">Month</div><h2>{month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</h2></div>
-        <div className="row-footer" style={{ margin: 0 }}>
-          <button className="ghost small-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>←</button>
-          <button className="ghost small-button" onClick={() => setMonth(startOfMonth(new Date()))}>This month</button>
-          <button className="ghost small-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>→</button>
-        </div>
+  return <section className="card">
+    <div className="card-header">
+      <div><div className="section-label">Month</div><h2>{month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</h2></div>
+      <div className="row-footer" style={{ margin: 0 }}>
+        <button className="ghost small-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>←</button>
+        <button className="ghost small-button" onClick={() => setMonth(startOfMonth(new Date()))}>This month</button>
+        <button className="ghost small-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>→</button>
       </div>
-      <div className="month-grid">
-        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => <div className="month-heading" key={label}>{label}</div>)}
-        {cells.map((cellDate, index) => {
-          if (!cellDate) return <div className="month-cell month-cell-blank" key={`blank-${index}`} />;
-          const key = toDateKey(cellDate);
-          const count = itemsOnDate(items, key).length;
-          return <button type="button" className="month-cell" key={key} onClick={() => setPickedDay(cellDate)}>
-            <span className="month-cell-num">{cellDate.getDate()}</span>
-            {count > 0 && <span className="month-cell-count">{count}</span>}
-          </button>;
-        })}
-      </div>
-      {staleLater.length > 0 && <div className="notice" style={{ marginTop: 14 }}>{staleLater.length} "Later" item{staleLater.length === 1 ? " has" : "s have"} no date yet. Check Saved for Later to give them one, or leave them parked.</div>}
-      {pickedDay && <div className="field full" style={{ marginTop: 18 }}>
-        <label>{pickedDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</label>
-        <div style={{ marginTop: 8 }}><ItemListWithDone items={pickedDayItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Nothing scheduled for this day." /></div>
-      </div>}
-    </section>
-    <UnscheduledCard items={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} />
-  </div>;
+    </div>
+    <div className="month-grid">
+      {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => <div className="month-heading" key={label}>{label}</div>)}
+      {cells.map((cellDate, index) => {
+        if (!cellDate) return <div className="month-cell month-cell-blank" key={`blank-${index}`} />;
+        const key = toDateKey(cellDate);
+        const count = itemsOnDate(items, key).length;
+        return <button type="button" className="month-cell" key={key} onClick={() => setPickedDay(cellDate)}>
+          <span className="month-cell-num">{cellDate.getDate()}</span>
+          {count > 0 && <span className="month-cell-count">{count}</span>}
+        </button>;
+      })}
+    </div>
+    {staleLater.length > 0 && <div className="notice" style={{ marginTop: 14 }}>{staleLater.length} "Later" item{staleLater.length === 1 ? " has" : "s have"} no date yet. Check Week's Saved for later to give them one, or leave them parked.</div>}
+    {pickedDay && <div className="field full" style={{ marginTop: 18 }}>
+      <label>{pickedDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</label>
+      <div style={{ marginTop: 8 }}><ItemListWithDone items={pickedDayItems} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Nothing scheduled for this day." /></div>
+    </div>}
+    <div className="field full" style={{ marginTop: 18 }}>
+      <label>Unscheduled ({unscheduled.length})</label>
+      <div style={{ marginTop: 8 }}><ItemListWithDone items={unscheduled} projects={projects} onOpen={onOpen} onDone={onDone} action="Edit" empty="Everything committed has a day, or nothing is committed yet. Add a due date in Plan to put an item on the calendar." /></div>
+    </div>
+  </section>;
 }
 
 function ProjectsSection({ projects, allItems, onOpen, onCreateProject }: { projects: Project[]; allItems: Item[]; onOpen: (project: Project) => void; onCreateProject: (project: Project) => void }) {
